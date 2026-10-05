@@ -1,0 +1,11 @@
+node_modules/
+dist/
+coverage/
+*.log
+.env
+.env.*.local
+.DS_Store
+Thumbs.db
+
+# Validation/company data; keep other intentional Excel fixtures trackable.
+/EXCEL_EXPORT_FILE_20261002181424.xlsx
