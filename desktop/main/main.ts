@@ -18,6 +18,8 @@ import { readSettings, writeSettings } from './settings';
 import type { DesktopSettings } from './settings';
 import { ServerStartError, realDeps, startOwnedServer } from './serverProcess';
 import type { OwnedServer } from './serverProcess';
+import { UPDATE_EVENT_CHANNEL, createUpdater, resolveRuntimeRoot } from './updater';
+import type { ManagedUpdater } from './updater';
 
 const WINDOW_WIDTH = 1440;
 const WINDOW_HEIGHT = 900;
@@ -30,6 +32,7 @@ let shuttingDown = false;
 let diagnostics: DiagnosticLog | undefined;
 /** Port the owned server actually bound to, reported in every failure page. */
 let activePort: number | null = null;
+let updater: ManagedUpdater | undefined;
 
 const UI_MOUNT_TIMEOUT_MS = 10_000;
 const UI_MOUNT_POLL_MS = 250;
@@ -346,11 +349,61 @@ async function boot(): Promise<void> {
     restartServer,
   });
 
+  registerUpdater();
+
   app.on('second-instance', () => {
     if (!mainWindow || mainWindow.isDestroyed()) return;
     if (mainWindow.isMinimized()) mainWindow.restore();
     mainWindow.focus();
   });
+}
+
+/**
+ * LAN auto-update. Packaged builds only: in development the "runtime" is the source checkout
+ * and replacing it would destroy work, so the updater stays off there.
+ *
+ * Creating the updater and starting its check are both non-blocking. An unreachable share
+ * produces a logged soft failure and nothing else — startup is never delayed by it.
+ */
+function registerUpdater(): void {
+  if (!app.isPackaged || !layout) {
+    log('update', 'update checking is only available in the packaged portable build');
+    return;
+  }
+  try {
+    const runtimeRoot = resolveRuntimeRoot({
+      resourcesPath: process.resourcesPath,
+      isPackaged: true,
+      cwd: process.cwd(),
+    });
+    updater = createUpdater({
+      runtimeRoot,
+      persistentDirs: {
+        dataDir: layout.dataDir,
+        backupsDir: layout.backupsDir,
+        reportsDir: layout.reportsDir,
+      },
+      settings: () => settings as DesktopSettings,
+      setUpdateSource: (value) => {
+        settings = writeSettings(layout!.settingsFile, { ...(settings as DesktopSettings), updateSource: value });
+        return settings;
+      },
+      log: (line) => { log('update', line); },
+      broadcast: (state) => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send(UPDATE_EVENT_CHANNEL, state);
+        }
+      },
+    });
+    log('update', `running build ${updater.local.build} (${updater.local.version}); working area ${updater.layout.updateDir}`);
+    // Report the outcome of the previous run before checking for anything new.
+    updater.coordinator.loadLastResult();
+    updater.startBackgroundCheck();
+  } catch (error) {
+    // An updater that cannot be constructed must never stop TNP from starting.
+    updater = undefined;
+    log('update', `the updater could not start: ${error instanceof Error ? error.message : String(error)}`);
+  }
 }
 
 app.whenReady().then(() => { void boot(); }).catch((error: unknown) => { void reportStartupFailure(error); });
@@ -364,6 +417,8 @@ let quitConfirmed = false;
 app.on('before-quit', (event) => {
   shuttingDown = true;
   unregisterBridge();
+  updater?.unregister();
+  updater = undefined;
   diagnostics?.close();
   const owned = server;
   server = undefined;

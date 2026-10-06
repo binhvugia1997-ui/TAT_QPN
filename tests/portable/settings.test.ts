@@ -59,14 +59,70 @@ describe('desktop settings', () => {
   it('survives a write/read round trip', () => {
     const store = memoryStore();
     const file = '/data/desktop-settings.json';
-    writeSettings(file, { lanEnabled: true, port: 9001, workstationLabel: 'Line 3 - QC' }, store);
-    expect(readSettings(file, store)).toEqual({ lanEnabled: true, port: 9001, workstationLabel: 'Line 3 - QC' });
+    writeSettings(
+      file,
+      {
+        lanEnabled: true,
+        port: 9001,
+        workstationLabel: 'Line 3 - QC',
+        updateSource: '\\\\BUILD-PC\\TNP_Update\\Test',
+        updateChannel: 'test',
+        updateChecksEnabled: true,
+      },
+      store,
+    );
+    expect(readSettings(file, store)).toEqual({
+      lanEnabled: true,
+      port: 9001,
+      workstationLabel: 'Line 3 - QC',
+      updateSource: '\\\\BUILD-PC\\TNP_Update\\Test',
+      updateChannel: 'test',
+      updateChecksEnabled: true,
+    });
   });
 
   it('normalizes on write so a bad value is never persisted', () => {
     const store = memoryStore();
     const file = '/data/desktop-settings.json';
     writeSettings(file, { lanEnabled: 'yes' as unknown as boolean, port: 12, workstationLabel: 'ok' }, store);
-    expect(JSON.parse(store.files[file]!)).toEqual({ lanEnabled: false, port: DEFAULT_PORT, workstationLabel: 'ok' });
+    expect(JSON.parse(store.files[file]!)).toEqual({
+      lanEnabled: false,
+      port: DEFAULT_PORT,
+      workstationLabel: 'ok',
+      updateSource: '',
+      updateChannel: 'test',
+      updateChecksEnabled: true,
+    });
+  });
+});
+
+describe('the update source settings', () => {
+  it('keeps a UNC path intact, because backslashes are legitimate there', () => {
+    const normalized = normalizeSettings({ updateSource: '  \\\\BUILD-PC\\TNP_Update\\Test  ' });
+    expect(normalized.updateSource).toBe('\\\\BUILD-PC\\TNP_Update\\Test');
+  });
+
+  it('bounds the length so a corrupt settings file cannot inflate it', () => {
+    expect(normalizeSettings({ updateSource: 'x'.repeat(900) }).updateSource).toHaveLength(500);
+    expect(normalizeSettings({ updateSource: 42 }).updateSource).toBe('');
+  });
+
+  it('falls back to the test channel for anything that is not a simple identifier', () => {
+    expect(normalizeSettings({ updateChannel: 'production' }).updateChannel).toBe('production');
+    expect(normalizeSettings({ updateChannel: 'TEST' }).updateChannel).toBe('test');
+    expect(normalizeSettings({ updateChannel: '../evil' }).updateChannel).toBe('test');
+    expect(normalizeSettings({}).updateChannel).toBe('test');
+  });
+
+  it('treats checking as enabled unless it is explicitly switched off', () => {
+    expect(normalizeSettings({}).updateChecksEnabled).toBe(true);
+    expect(normalizeSettings({ updateChecksEnabled: 'no' }).updateChecksEnabled).toBe(true);
+    expect(normalizeSettings({ updateChecksEnabled: false }).updateChecksEnabled).toBe(false);
+    expect(normalizeSettings({ updateChecksEnabled: true }).updateChecksEnabled).toBe(true);
+  });
+
+  it('leaves update checking off when no source is configured', () => {
+    expect(defaultSettings.updateSource).toBe('');
+    expect(defaultSettings.updateChecksEnabled).toBe(true);
   });
 });

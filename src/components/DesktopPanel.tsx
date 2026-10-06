@@ -146,7 +146,35 @@ export function DesktopPanel({ locale, onServerRestarted }: DesktopPanelProps) {
       </label>
       <p className="hint">{translate(locale, 'desktopWorkstationHelp')}</p>
 
+      <label className="desktop-row desktop-label-row">
+        <span>{translate(locale, 'updateSourceLabel')}</span>
+        <input
+          type="text"
+          value={state?.settings.updateSource ?? ''}
+          maxLength={500}
+          disabled={busy}
+          spellCheck={false}
+          placeholder={translate(locale, 'updateSourcePlaceholder')}
+          onChange={(event) => {
+            const desktop = getDesktopBridge();
+            const value = event.target.value;
+            if (!desktop) return;
+            setState((previous) => (previous ? { ...previous, settings: { ...previous.settings, updateSource: value } } : previous));
+            void desktop.setUpdateSource(value).catch(() => undefined);
+          }}
+        />
+      </label>
+      <p className="hint">{translate(locale, 'updateSourceHelp')}</p>
+
       <div className="desktop-actions">
+        <button
+          type="button"
+          className="secondary-button"
+          disabled={busy}
+          onClick={() => void run(() => getDesktopBridge()!.checkForUpdate(), 'updateUpToDate')}
+        >
+          {translate(locale, 'updateCheckNow')}
+        </button>
         <button type="button" disabled={busy} onClick={() => void run(() => getDesktopBridge()!.createBackup(), 'desktopBackupDone')}>
           {translate(locale, 'desktopBackupNow')}
         </button>

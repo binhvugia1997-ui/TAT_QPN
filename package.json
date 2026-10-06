@@ -2,6 +2,7 @@
   "name": "tnp-defect-management-dev",
   "private": true,
   "version": "0.2.0",
+  "tnpBuild": 1,
   "type": "module",
   "scripts": {
     "dev": "node scripts/dev.mjs",
@@ -22,7 +23,9 @@
     "desktop": "node scripts/dev-desktop.mjs",
     "test:portable": "vitest run tests/portable",
     "build:portable-server": "npm run build:server",
-    "test:portable-runtime": "vitest run tests/portable/runtime.test.ts"
+    "test:portable-runtime": "vitest run tests/portable/runtime.test.ts",
+    "update:publish": "npm run package:portable && npm run build:desktop && node dist-desktop/desktop/update/publish.js",
+    "test:update": "vitest run tests/update"
   },
   "dependencies": {
     "@e965/xlsx": "^0.20.3",

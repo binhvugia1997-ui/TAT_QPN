@@ -12,6 +12,7 @@ import type {
   TnpDesktopState,
   TnpDesktopSettings,
   TnpPickResult,
+  TnpUpdateState,
 } from '../types/tnpDesktop';
 
 /** Whitelist: a channel not in this list can never be reached from the page. */
@@ -25,7 +26,15 @@ const ALLOWED_CHANNELS = [
   'tnp:set-lan-enabled',
   'tnp:set-workstation-label',
   'tnp:restart-server',
+  'tnp:get-update-state',
+  'tnp:check-update',
+  'tnp:install-update',
+  'tnp:dismiss-update',
+  'tnp:set-update-source',
 ] as const;
+
+/** The one channel the desktop pushes to. The page cannot send on it. */
+const UPDATE_EVENT_CHANNEL = 'tnp:update-state';
 
 type AllowedChannel = (typeof ALLOWED_CHANNELS)[number];
 
@@ -59,6 +68,17 @@ const bridge: TnpDesktopBridge = {
   setWorkstationLabel: (label) =>
     call<{ settings: TnpDesktopSettings; restartRequired: boolean }>('tnp:set-workstation-label', label),
   restartServer: () => call<{ baseUrl: string; port: number }>('tnp:restart-server'),
+  getUpdateState: () => call<TnpUpdateState>('tnp:get-update-state'),
+  checkForUpdate: () => call<{ status: string }>('tnp:check-update'),
+  installUpdate: () => call<{ started: boolean }>('tnp:install-update'),
+  dismissUpdate: () => call<{ dismissed: boolean }>('tnp:dismiss-update'),
+  setUpdateSource: (source) =>
+    call<{ source: string; state: TnpUpdateState }>('tnp:set-update-source', source),
+  onUpdateState: (listener) => {
+    const handler = (_event: unknown, state: TnpUpdateState): void => { listener(state); };
+    ipcRenderer.on(UPDATE_EVENT_CHANNEL, handler);
+    return () => { ipcRenderer.removeListener(UPDATE_EVENT_CHANNEL, handler); };
+  },
 };
 
 contextBridge.exposeInMainWorld('tnpDesktop', bridge);

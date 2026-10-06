@@ -23,7 +23,8 @@ export type StartupStage =
   | 'ui-mounted'
   | 'ui-blank'
   | 'renderer-console'
-  | 'renderer-gone';
+  | 'renderer-gone'
+  | 'update';
 
 export interface DiagnosticLog {
   write(stage: StartupStage, message: string): void;

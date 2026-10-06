@@ -18,12 +18,26 @@ export interface DesktopSettings {
   port: number;
   /** Free-form owner label written into the audit trail for this workstation. */
   workstationLabel: string;
+  /**
+   * LAN folder holding `version.json` and update packages, for example
+   * `\\BUILD-PC\TNP_Update\Test`. Empty means update checking is off. Never hard-coded.
+   */
+  updateSource: string;
+  /** Update channel this PC accepts. TEST builds use `test`. */
+  updateChannel: string;
+  /** Owner can switch the background check off entirely. */
+  updateChecksEnabled: boolean;
 }
+
+export const DEFAULT_UPDATE_CHANNEL = 'test';
 
 export const defaultSettings: DesktopSettings = {
   lanEnabled: false,
   port: DEFAULT_PORT,
   workstationLabel: '',
+  updateSource: '',
+  updateChannel: DEFAULT_UPDATE_CHANNEL,
+  updateChecksEnabled: true,
 };
 
 export interface SettingsStore {
@@ -71,10 +85,18 @@ export function normalizeSettings(input: unknown): DesktopSettings {
   const source = (typeof input === 'object' && input !== null ? input : {}) as Record<string, unknown>;
   const port = Number(source.port);
   const label = typeof source.workstationLabel === 'string' ? source.workstationLabel : '';
+  const updateSource = typeof source.updateSource === 'string' ? source.updateSource : '';
+  const channel = typeof source.updateChannel === 'string' ? source.updateChannel : '';
   return {
     // Only a real boolean true enables LAN; absent/garbage stays off.
     lanEnabled: source.lanEnabled === true,
     port: Number.isInteger(port) && port >= MIN_PORT && port <= MAX_PORT ? port : DEFAULT_PORT,
     workstationLabel: label.trim().slice(0, 60),
+    // An update source is a path, so it is trimmed and length-bounded but otherwise opaque:
+    // UNC paths legitimately start with backslashes.
+    updateSource: updateSource.trim().slice(0, 500),
+    updateChannel: /^[a-z0-9-]{1,32}$/u.test(channel.trim()) ? channel.trim() : DEFAULT_UPDATE_CHANNEL,
+    // Absent means enabled; only an explicit false switches the check off.
+    updateChecksEnabled: source.updateChecksEnabled !== false,
   };
 }

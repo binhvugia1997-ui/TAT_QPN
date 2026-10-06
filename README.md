@@ -103,11 +103,44 @@ no GitHub Release. See [`docs/phase6-windows-test-portable.md`](docs/phase6-wind
   default; enabling it restarts the server bound to `0.0.0.0`, and the Windows Private-network
   firewall may need the owner's approval. This app never changes the firewall.
 
+## Phase 7 acceptance — safe LAN auto-update (TEST channel)
+
+Publishing a TEST build from the **build machine** (Windows, with Git and Node):
+
+```
+BUILD_AND_PUBLISH_TNP_TEST.bat "\\BUILD-PC\TNP_Update\Test"
+```
+
+That script verifies Git and the branch, requires a safe fast-forward, refuses a dirty tracked
+tree, runs every gate, builds the win-x64 portable runtime, packages it, inspects it, hashes
+it, and publishes `version.json` **last**. It never runs `git reset --hard`, `stash`, `rebase`,
+force-push or an auto-merge, and it never touches `data/`, `backups/` or `reports/`.
+
+On the **Owner PC**: open the System page → Desktop → *LAN update folder* and set the share.
+TNP then checks in the background at startup. It never blocks startup, never downloads from the
+internet, and an unreachable share is only a line in the diagnostic log.
+
+Updating replaces the application only. `data/tnp.db`, `backups/` and `reports/` are preserved
+byte for byte, and a failed install rolls the previous application back without restoring any
+database.
+
+`UPDATE_AND_BUILD_TNP.bat` is a developer convenience for the build machine. A production
+update never depends on GitHub.
+
+Details: [`docs/phase7-lan-auto-update.md`](docs/phase7-lan-auto-update.md).
+
 ## Phase 4 acceptance
 
 The real-workbook integration test reads the validation workbook without modifying it and uses an isolated `fake-indexeddb` database. With the 191-record seed, its first import is 110 new rows; a repeat is 110 unchanged rows, with app-managed PIC/notes/CA link retained. The test is skipped when the workbook fixture is absent. Browser interaction remains a user acceptance step; see [`docs/phase4-user-acceptance-checklist.md`](docs/phase4-user-acceptance-checklist.md).
 
 ## Checks
+
+Phase 7 update suites:
+
+```
+npm run test:update          # client, publisher and packaged-layout suites
+```
+
 
 ```bash
 npm test               # full suite (browser logic + server runtime + portable)

@@ -2,6 +2,7 @@ import { NavLink, Outlet } from 'react-router-dom';
 import type { Locale, MessageKey } from '../i18n';
 import { translate } from '../i18n';
 import type { ServerStatus } from '../services/server/serverRecordRepository';
+import { UpdateNotice } from './UpdateNotice';
 
 interface AppLayoutProps {
   locale: Locale;
@@ -68,6 +69,8 @@ export default function AppLayout({ locale, onLocaleChange, status }: AppLayoutP
           </nav>
         </aside>
         <main className="main-content">
+          {/* App-wide so the owner sees an available update without hunting for the panel. */}
+          <UpdateNotice locale={locale} />
           <Outlet />
         </main>
       </div>

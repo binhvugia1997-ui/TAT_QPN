@@ -124,6 +124,8 @@ async function main() {
         name: 'tnp-defect-management-test',
         productName: APP_NAME,
         version: pkg.version ?? '0.0.0',
+        // The updater orders builds on this integer, never on the version string.
+        tnpBuild: Number(pkg.tnpBuild) || 0,
         // CommonJS: both the desktop wrapper and the server runtime are compiled to it.
         type: 'commonjs',
         main: 'dist/desktop/main/main.js',
@@ -279,6 +281,9 @@ function verifyPackage(target) {
     'resources/app/server-runtime/package.json',
     'resources/app/seed/legacy-base-data.json',
     'resources/app/web/index.html',
+    // Phase 7: the standalone updater helper is spawned from inside the runtime, so it has to
+    // ship with it or an update can never be applied on the Owner PC.
+    'resources/app/dist/desktop/update/helperMain.js',
   ];
   for (const relative of checks) {
     const full = resolve(target, relative);

@@ -285,3 +285,46 @@ cleanly and then fails at startup. `tests/portable/runtime.test.ts` assembles a 
 against a stand-in runtime, walks every `require()` in the packaged chain resolving it as Node
 would, and actually loads the packaged `serverProcess` and `startupSignals` modules. If the pinned Electron runtime cannot be downloaded the
 script reports `BLOCKED` and changes nothing: no version bump, no mirror substitution.
+
+## 13. Phase 7 LAN auto-update
+
+The updater lives entirely under `desktop/update/` and is compiled by `tsconfig.desktop.json`
+alongside the desktop wrapper, so it ships inside `resources/app/dist/desktop/update/` with no
+extra packaging step.
+
+| Module | Responsibility |
+|---|---|
+| `manifest.ts` | strict manifest parsing, build ordering, package-name safety |
+| `layout.ts` | the update working area, and the preserved-directory contract |
+| `archive.ts` | ZIP central-directory reader, ZIP-slip guard, extract/create |
+| `transfer.ts` | chunked copy with real byte progress, `.partial` then rename |
+| `hash.ts` | streaming SHA256, timing-safe comparison |
+| `packageInspect.ts` | the runtime-only package contract and identity check |
+| `checkForUpdate.ts` | the non-blocking check and `[Later]` suppression |
+| `install.ts` | runtime backup, replace and rollback, with preservation guards |
+| `updaterCore.ts` | the client state machine, Electron-free and unit tested |
+| `helperMain.ts` | the detached helper that swaps the runtime after TNP exits |
+| `publish.ts` | the publisher, invoked as `node dist-desktop/desktop/update/publish.js` |
+| `source.ts` | the LAN folder as an update source |
+
+`desktop/main/updater.ts` is the only Electron-facing piece: it resolves the runtime root,
+registers five IPC channels, and pushes state to the renderer on `tnp:update-state`.
+
+Three rules make the whole design safe:
+
+1. **Nothing is written to the running runtime until the package is copied, hashed, validated
+   and extracted.** A failure at any of those points leaves the working build untouched.
+2. **The running EXE is never overwritten by the process that owns it.** The swap is done by a
+   detached helper running from the *staged* runtime, using the Electron binary as a plain Node
+   host (`ELECTRON_RUN_AS_NODE=1`), so no Node install is needed on the Owner PC.
+3. **Production state is excluded by construction, not by care.** `data/`, `backups/` and
+   `reports/` are recorded as preserved paths, filtered out of the runtime entry list, guarded
+   on every filesystem operation, and rejected if they ever appear in a package.
+
+There are two unrelated backups and the distinction matters: SQLite snapshots in `backups/`
+(owner data, made by the server) and the runtime rollback copy in `.tnp-update/runtime-backup/`
+(application files, made by the updater). A failed update restores the *application*. It never
+restores a database.
+
+Full details, the publishing order and the test matrix are in
+[`phase7-lan-auto-update.md`](./phase7-lan-auto-update.md).

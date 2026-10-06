@@ -755,3 +755,40 @@ button:disabled { cursor: not-allowed; opacity: .62; }
   font-size: 0.8rem;
   opacity: 0.9;
 }
+
+/* ------------------------------------------------------------------ */
+/* Phase 7 — LAN auto-update prompt                                    */
+/* ------------------------------------------------------------------ */
+.update-notice {
+  margin: 0 0 18px;
+  padding: 16px 18px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--orange);
+  border-radius: 10px;
+  display: grid;
+  gap: 10px;
+}
+.update-notice[data-phase="failed"] { border-left-color: var(--red); }
+.update-notice[data-phase="complete"] { border-left-color: var(--green); }
+.update-notice[data-phase="downloading"], .update-notice[data-phase="installing"] { border-left-color: var(--amber); }
+.update-notice h2 { margin: 0 0 6px; font-size: 1.05rem; }
+.update-notice p { margin: 0; }
+.update-notice-body { display: grid; gap: 4px; }
+.update-notice-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 6px; }
+.update-safety { font-size: 0.82rem; color: var(--muted); }
+.update-progress { display: grid; gap: 8px; }
+.update-progress-bar {
+  height: 10px;
+  background: #eceee7;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.update-progress-bar span {
+  display: block;
+  height: 100%;
+  background: var(--green);
+  transition: width 160ms ease-out;
+}
+.update-complete p { margin: 0; color: var(--green); font-weight: 600; }
