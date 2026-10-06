@@ -36,7 +36,7 @@ import {
   statSync,
   writeFileSync,
 } from 'node:fs';
-import { basename, dirname, join, resolve } from 'node:path';
+import path, { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -164,6 +164,13 @@ async function obtainElectronRuntime() {
 
   const zipName = `electron-v${ELECTRON_VERSION}-${TARGET_PLATFORM}-${TARGET_ARCH}.zip`;
   const cached = resolve(CACHE_DIR, zipName);
+  const extracted = resolve(CACHE_DIR, `electron-v${ELECTRON_VERSION}-${TARGET_PLATFORM}-${TARGET_ARCH}`);
+
+  // An already-extracted runtime wins, so a manual download/extraction needs no re-download.
+  if (existsSync(resolve(extracted, launcherName())) || existsSync(resolve(extracted, 'electron.exe'))) {
+    line(`Using the extracted runtime in ${extracted}.`);
+    return extracted;
+  }
 
   if (!existsSync(cached)) {
     const mirror = process.env.ELECTRON_MIRROR;
@@ -205,14 +212,14 @@ async function obtainElectronRuntime() {
         + 'Run the same command on the Windows PC that will use the build:\n'
         + '  npm install\n  npm run package:portable\n'
         + 'If that machine is also restricted, download the zip manually into .cache/ with the\n'
-        + `name ${zipName} and re-run npm run package:portable.`,
+        + `name ${zipName}, or extract it into .cache/${path.basename(extracted)}/, and re-run\n`
+        + 'npm run package:portable.',
       );
     }
   } else {
-    line(`Using the cached runtime ${basename(cached)}.`);
+    line(`Using the cached archive ${basename(cached)}.`);
   }
 
-  const extracted = resolve(CACHE_DIR, `electron-v${ELECTRON_VERSION}-${TARGET_PLATFORM}-${TARGET_ARCH}`);
   if (!existsSync(resolve(extracted, launcherName()))) {
     if (existsSync(extracted)) rmSync(extracted, { recursive: true, force: true });
     mkdirSync(extracted, { recursive: true });

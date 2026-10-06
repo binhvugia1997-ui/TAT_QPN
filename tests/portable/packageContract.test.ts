@@ -75,10 +75,23 @@ describe('portable package contract', () => {
     expect(packager).toContain('exactly 191 records');
   });
 
+  it('uses an already-extracted runtime without touching the network', () => {
+    const packager = read('scripts/package-portable.mjs');
+    // The extracted-runtime check must come before the download, so an offline recovery
+    // (manual download or manual extraction into .cache/) needs no network at all.
+    const extractedCheck = packager.indexOf('Using the extracted runtime in');
+    const downloadStep = packager.indexOf('Downloading ${url}');
+    expect(extractedCheck).toBeGreaterThan(-1);
+    expect(downloadStep).toBeGreaterThan(-1);
+    expect(extractedCheck).toBeLessThan(downloadStep);
+  });
+
   it('never changes the pinned Electron version when the download is unavailable', () => {
     const packager = read('scripts/package-portable.mjs');
     expect(packager).toContain('BLOCKED');
     expect(packager).toContain('was NOT changed');
+    // A refused download must not leave a half-built folder behind.
+    expect(packager).toContain('no mirror was substituted');
     // An ESM script cannot use require(); that would be a hard runtime failure.
     expect(packager).not.toContain('require(');
   });

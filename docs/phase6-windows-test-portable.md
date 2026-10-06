@@ -152,9 +152,18 @@ to ship the company workbook, or any `data/`, `backups/` or `reports/` folder. A
 assembling, it verifies the launcher and seven packaged files exist.
 
 **If the Electron download is blocked**, the script stops and prints `BLOCKED` with the exact
-version and URL it wanted. It does **not** change the pinned version and does **not**
-substitute a mirror. Run the same command on the Windows PC that will use the build, or
-download the zip manually into `.cache/` under the printed filename and re-run.
+version and URL it wanted. It does **not** change the pinned version, does **not** substitute a
+mirror, and leaves **no** partially built folder behind. Two recoveries, both offline:
+
+- run the same command on the Windows PC that will use the build; or
+- place the runtime in `.cache/` yourself, either as the zip
+  `electron-v44.5.1-win32-x64.zip` or already extracted into
+  `.cache/electron-v44.5.1-win32-x64/`, then re-run. An extracted runtime is used as-is with
+  no network access at all.
+
+Everything except that one download is verifiable without it: the assembler, the packaged
+layout and the packaged server runtime can all be exercised against a stand-in runtime, and
+the packaged server is what actually reads and writes the data.
 
 For wrapper development without packaging: `npm run desktop`.
 
