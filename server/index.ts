@@ -4,6 +4,7 @@ import { acquireDatabaseLock, DatabaseLockError } from './lock';
 import { getLanAddresses } from './lan';
 import { describePath, resolveRuntimePaths } from './paths';
 import type { ConfigOverrides } from './config';
+import { classifyStartupError, writeFatalLine, writeReadyLine } from './startupSignals';
 
 interface CliOptions {
   overrides: ConfigOverrides;
@@ -56,6 +57,7 @@ async function main(): Promise<void> {
     releaseLock = acquireDatabaseLock(paths.lockFile, paths.databaseFile);
   } catch (error) {
     if (error instanceof DatabaseLockError) {
+      writeFatalLine('lock', error.message, (text) => process.stderr.write(text));
       process.stderr.write(`Startup refused: ${error.message}\n`);
       process.exitCode = 1;
       return;
@@ -72,10 +74,25 @@ async function main(): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     httpServer.once('error', reject);
     httpServer.listen(config.port, config.bindHost, resolve);
+  }).catch((error: unknown) => {
+    writeFatalLine(classifyStartupError(error), error instanceof Error ? error.message : String(error),
+      (text) => process.stderr.write(text));
+    throw error;
   });
 
   const address = httpServer.address();
   const actualPort = address && typeof address === 'object' ? address.port : config.port;
+
+  writeReadyLine({
+    port: actualPort,
+    bindHost: config.bindHost,
+    lanEnabled: config.lanEnabled,
+    databaseFile: describePath(paths, paths.databaseFile),
+    schemaVersion: context.database.userVersion,
+    records: context.records.count(),
+    seeded: context.seed.seeded,
+    alreadyInitialized: context.seed.alreadyInitialized,
+  });
 
   process.stdout.write(
     [

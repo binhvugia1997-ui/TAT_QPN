@@ -15,7 +15,12 @@
     "test:watch": "vitest",
     "test:server": "vitest run tests/server",
     "migrate:indexeddb": "npm run build:server && node dist-server/server/migrateIndexedDb.js",
-    "typecheck": "tsc --noEmit && tsc -p tsconfig.server.json --noEmit"
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.server.json --noEmit && tsc -p tsconfig.desktop.json --noEmit",
+    "build:desktop": "tsc -p tsconfig.desktop.json && node scripts/finalize-desktop-build.mjs",
+    "build:portable": "npm run build && npm run build:server && npm run build:desktop",
+    "package:portable": "npm run build:portable && node scripts/package-portable.mjs",
+    "desktop": "node scripts/dev-desktop.mjs",
+    "test:portable": "vitest run tests/portable"
   },
   "dependencies": {
     "@e965/xlsx": "^0.20.3",
@@ -28,9 +33,11 @@
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.1.1",
+    "electron": "44.5.1",
     "fake-indexeddb": "^6.2.5",
     "typescript": "^5.9.3",
     "vite": "^8.3.2",
     "vitest": "^5.0.3"
-  }
+  },
+  "main": "dist-desktop/desktop/main/main.js"
 }

@@ -123,13 +123,15 @@ Vitest tests pure status/TAT/duplicate/KPI/filters logic and IndexedDB repositor
 
 ## 10. Deferred work
 
-Manual record-entry UI, CSV export, persisted personal filter preferences and native Windows
-file opening for CA files remain deferred. Destructive one-click restore/reset is deliberately
-**not** implemented: backups are listed and sized, and a restore is a manual operator action
-taken while the server is stopped. Authentication, TLS and any public-Internet exposure are
-out of scope. Installer/portable/executable, auto-updater, production release and deployment
-remain explicitly out of scope. The legacy on-time KPI denominator and status semantics for
-`Đợi duyệt` / `Đợi xét` are unchanged and are not redefined by Analysis.
+Manual record-entry UI, CSV export and persisted personal filter preferences remain deferred.
+Destructive one-click restore/reset is deliberately **not** implemented: backups are listed and
+sized, and a restore is a manual operator action taken while the server is stopped.
+Authentication, TLS and any public-Internet exposure are out of scope, as are an auto-updater,
+code signing, a production release and any deployment. The legacy on-time KPI denominator and
+status semantics for `Đợi duyệt` / `Đợi xét` are unchanged and are not redefined by Analysis.
+
+Native Windows file opening and a portable executable were deferred until **Phase 6** and are
+now implemented; see section 12.
 
 ## 11. Phase 5 server runtime
 
@@ -216,3 +218,54 @@ cannot change it.
 
 A lock file in `data/` ensures one server owns a data directory at a time. A second start is
 refused with an explicit message; a stale lock from a dead process is taken over.
+
+## 12. Phase 6 desktop wrapper
+
+Phase 6 adds an Electron shell around the Phase 5 runtime without changing any Phase 5 rule.
+See [`phase6-windows-test-portable.md`](phase6-windows-test-portable.md) for the owner-facing
+detail.
+
+### Dependency direction
+
+```
+Electron main ─spawn→ node (ELECTRON_RUN_AS_NODE) → Phase 5 server → SQLite
+      └──────────── BrowserWindow → http://127.0.0.1:<port> ────────┘
+```
+
+The desktop never imports the database layer and never issues SQL. It is a window, a process
+supervisor and a native-file bridge. `desktop/main/paths.ts` and `desktop/main/bridgeCore.ts`
+import no Electron API, so the layout and security rules are unit tested directly.
+
+### Startup handshake
+
+`server/startupSignals.ts` emits one JSON line per outcome — `TNP_READY {…}` on success and
+`TNP_FATAL {reason, message}` on refusal — parsed from **both** stdout and stderr, because a
+refusal is written to stderr. This is how the desktop learns the port it actually bound and
+distinguishes a database lock from a port conflict from a missing seed. Only a port conflict
+is retried, on a freshly probed free port; the desktop never attaches to whatever already
+holds the preferred port.
+
+### Portable layout
+
+The data root is the executable's folder when that folder is writable, otherwise the per-user
+app-data folder, with the reason surfaced in the UI. `TNP_DATA_ROOT` overrides both. `data/`,
+`backups/` and `reports/` sit under that root exactly as in Phase 5.
+
+### Native file bridge
+
+The renderer is untrusted. It cannot pass a filesystem path in: attaching uses an opaque,
+single-use, five-minute token minted from a native picker, and opening asks the loopback
+server to resolve the record's managed report. `GET /api/records/:id/report-path` is gated on
+`config.desktopBridge` **and** a loopback peer address, so a plain server returns 404 and a
+LAN client is rejected; the desktop then re-checks containment against the managed folder
+before calling `shell.openPath`. There is no `exec`, no `openExternal` and no filesystem
+browser. The preload exposes nine named channels, with `contextIsolation` on,
+`nodeIntegration` off, `sandbox` on, popups denied and navigation pinned to its own server.
+
+### Packaging
+
+`scripts/package-portable.mjs` assembles a plain folder — Electron runtime plus
+`resources/app/{dist,server-runtime,seed,web}` — with no installer and no release. It refuses
+to ship the company workbook or any runtime folder, verifies the seed is exactly 191 records,
+and verifies the assembled tree. If the pinned Electron runtime cannot be downloaded the
+script reports `BLOCKED` and changes nothing: no version bump, no mirror substitution.

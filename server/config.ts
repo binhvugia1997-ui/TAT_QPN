@@ -10,6 +10,11 @@ export interface ServerConfig {
   port: number;
   lanEnabled: boolean;
   bindHost: string;
+  /**
+   * True only when started by the owner desktop wrapper. It enables the loopback-only
+   * managed-report path lookup the native bridge needs; a plain server never exposes it.
+   */
+  desktopBridge: boolean;
   /** Where each setting came from, for the status endpoint and startup log. */
   sources: { port: string; lan: string };
 }
@@ -77,6 +82,7 @@ export function loadServerConfig(
     port,
     lanEnabled,
     bindHost,
+    desktopBridge: parseBooleanFlag(env.TNP_DESKTOP_BRIDGE) === true,
     sources: {
       port: overrides.port ? 'argument' : envPort ? 'environment' : file.port ? 'config-file' : 'default',
       lan: overrides.lanEnabled !== undefined ? 'argument'

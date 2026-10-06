@@ -676,3 +676,82 @@ button:disabled { cursor: not-allowed; opacity: .62; }
   margin-top: 0.75rem;
   padding-top: 0.5rem;
 }
+
+/* ---------------------------------------------------------------------------
+   Phase 6 — Windows TEST desktop wrapper
+   Only rendered inside the Electron build; absent in a browser tab.
+   --------------------------------------------------------------------------- */
+
+.desktop-panel {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.desktop-facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 0.5rem 1rem;
+  margin: 0;
+}
+
+.desktop-facts > div {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+.desktop-facts dt {
+  font-size: 0.72rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  opacity: 0.65;
+}
+
+.desktop-facts dd {
+  margin: 0;
+  font-size: 0.85rem;
+  overflow-wrap: anywhere;
+}
+
+.desktop-facts code {
+  font-size: 0.78rem;
+  overflow-wrap: anywhere;
+}
+
+.desktop-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+}
+
+.desktop-label-row {
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.desktop-label-row input[type='text'] {
+  flex: 1 1 auto;
+  max-width: 280px;
+}
+
+.desktop-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.desktop-notice {
+  color: var(--color-positive, #1c7c4a);
+}
+
+.desktop-panel .warning-note {
+  margin: 0;
+  padding: 0.5rem 0.65rem;
+  border-left: 3px solid currentColor;
+  font-size: 0.8rem;
+  opacity: 0.9;
+}

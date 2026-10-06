@@ -1,7 +1,11 @@
 node_modules/
 dist/
 dist-server/
+dist-desktop/
 coverage/
+
+# Downloaded Electron runtime archives and their extraction.
+.cache/
 *.log
 .env
 .env.*.local

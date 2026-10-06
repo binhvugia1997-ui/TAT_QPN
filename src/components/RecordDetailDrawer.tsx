@@ -5,6 +5,7 @@ import type { DefectRecord } from '../models/defect-record';
 import { LEGACY_STATUS_VALUES } from '../business/status/status';
 import { recordService, serverApi } from '../app/services';
 import { RecordConflictError } from '../services/server/apiClient';
+import { getDesktopBridge } from '../services/desktop/desktopBridge';
 import type { AuditSummary, ReportSummary } from '../services/server/serverRecordRepository';
 
 interface RecordDetailDrawerProps {
@@ -212,6 +213,47 @@ export default function RecordDetailDrawer({ locale, record, onClose, onSaved }:
     }
   }
 
+  /**
+   * Owner-only convenience: hand the managed report to the Windows default application.
+   * Available only inside the desktop wrapper; the path is resolved by the server and
+   * re-checked by the wrapper, so the page never supplies one.
+   */
+  async function openReportNatively() {
+    const desktop = getDesktopBridge();
+    if (!desktop) return;
+    setReportBusy(true);
+    setError('');
+    try {
+      await desktop.openReport(record.id);
+    } catch (reason) {
+      setError(translate(locale, 'reportOpenNativeFailed'));
+      setErrorDetails(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setReportBusy(false);
+    }
+  }
+
+  /** Native file picker; the chosen path stays in the desktop wrapper. */
+  async function attachReportNatively() {
+    const desktop = getDesktopBridge();
+    if (!desktop) return;
+    setReportBusy(true);
+    setError('');
+    try {
+      const picked = await desktop.pickReportFile();
+      if (picked.canceled || !picked.token) return;
+      await desktop.attachReport(record.id, picked.token);
+      const result = await serverApi.reportInfo(record.id);
+      setReport(result);
+      void reloadServerState(record);
+    } catch (reason) {
+      setError(translate(locale, 'reportAttachFailed'));
+      setErrorDetails(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setReportBusy(false);
+    }
+  }
+
   async function unlinkReport() {
     setReportBusy(true);
     setError('');
@@ -310,9 +352,15 @@ export default function RecordDetailDrawer({ locale, record, onClose, onSaved }:
               <div className="report-row">
                 <code>{report.report.originalName}</code>
                 <span>{Math.round(report.report.sizeBytes / 1024)} KB</span>
-                <a className="secondary-button" href={serverApi.reportUrl(record.id)} target="_blank" rel="noreferrer">
-                  {translate(locale, 'reportOpen')}
-                </a>
+                {getDesktopBridge() ? (
+                  <button type="button" className="secondary-button" onClick={openReportNatively} disabled={reportBusy}>
+                    {translate(locale, 'reportOpenNative')}
+                  </button>
+                ) : (
+                  <a className="secondary-button" href={serverApi.reportUrl(record.id)} target="_blank" rel="noreferrer">
+                    {translate(locale, 'reportOpen')}
+                  </a>
+                )}
                 <button type="button" className="secondary-button" onClick={unlinkReport} disabled={reportBusy}>
                   {translate(locale, 'reportUnlink')}
                 </button>
@@ -324,10 +372,16 @@ export default function RecordDetailDrawer({ locale, record, onClose, onSaved }:
               </p>
             )}
             {report.state === 'no-report' && <p className="hint">{translate(locale, 'reportNone')}</p>}
-            <label className="secondary-button report-upload">
-              {translate(locale, 'reportAttach')}
-              <input type="file" onChange={attachReport} disabled={reportBusy} />
-            </label>
+            {getDesktopBridge() ? (
+              <button type="button" className="secondary-button" onClick={attachReportNatively} disabled={reportBusy}>
+                {translate(locale, 'reportAttachNative')}
+              </button>
+            ) : (
+              <label className="secondary-button report-upload">
+                {translate(locale, 'reportAttach')}
+                <input type="file" onChange={attachReport} disabled={reportBusy} />
+              </label>
+            )}
             <small>{translate(locale, 'reportHelp')}</small>
           </section>
 

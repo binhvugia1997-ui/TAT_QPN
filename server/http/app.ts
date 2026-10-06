@@ -20,6 +20,13 @@ export interface HttpAppOptions {
   staticDir?: string | null;
 }
 
+/** Loopback only; a LAN address must never receive a host filesystem path. */
+export function isLoopbackAddress(address: string | null | undefined): boolean {
+  if (!address) return false;
+  const normalized = address.replace(/^::ffff:/u, '').toLowerCase();
+  return normalized === '127.0.0.1' || normalized === '::1' || normalized === 'localhost';
+}
+
 const SECURITY_HEADERS: Record<string, string> = {
   'X-Content-Type-Options': 'nosniff',
   'X-Frame-Options': 'DENY',
@@ -199,6 +206,29 @@ export function createHttpServer(options: HttpAppOptions): http.Server {
             recordIdKey: idKey,
             limit: optionalInteger(numberOrNull(url.searchParams.get('limit')), 'limit', 500),
           }),
+        });
+        return;
+      }
+
+      /**
+       * Resolves a record's managed report to a real filesystem path so the owner desktop
+       * can hand it to the Windows default application. Doubly gated: the server must have
+       * been started by the desktop wrapper, and the connection must be loopback, so a LAN
+       * client can never obtain a host path. Phase 5 containment and symlink checks still
+       * run through `reportStorage.open`.
+       */
+      if (segments.length === 4 && segments[3] === 'report-path' && method === 'GET') {
+        if (!context.config.desktopBridge) {
+          throw new HttpError(404, 'not-found', 'The managed-report path lookup is only available to the owner desktop.');
+        }
+        if (!isLoopbackAddress(request.socket.remoteAddress)) {
+          throw new StorageSecurityError('The managed-report path lookup is restricted to the local machine.');
+        }
+        const resolved = context.reportStorage.open(idKey);
+        sendJson(response, 200, {
+          absolutePath: resolved.filePath,
+          originalName: resolved.link.originalName,
+          sizeBytes: resolved.sizeBytes,
         });
         return;
       }

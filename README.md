@@ -77,6 +77,32 @@ Phase 1–4 behavior is unchanged: the canonical record model, the 191-record se
 fields and `sourceExtras`, Home, Records, Analysis, TAT Monitoring, Corrective Actions,
 Rejected, effective TAT, priority sorting and the import parser.
 
+## Phase 6 acceptance — Windows TEST portable build
+
+`npm run package:portable` produces a plain folder in `artifacts/` that the owner copies
+anywhere and runs by double-clicking. No installer, no administrator rights, no auto-update,
+no GitHub Release. See [`docs/phase6-windows-test-portable.md`](docs/phase6-windows-test-portable.md).
+
+- **Same server, same data** — the desktop starts the Phase 5 server as a child process and
+  points a window at `http://127.0.0.1:<port>`. It never opens SQLite itself, and no Phase 5
+  rule changed: import, TAT, audit, backups, concurrency and report identity are untouched.
+- **Portable data** — `data/`, `backups/` and `reports/` are created next to the executable, so
+  copying the folder copies the dataset. If that folder is read-only the app falls back to the
+  per-user profile and says so on the System page instead of relocating data silently.
+- **Honest startup** — the server prints a machine-readable ready/fatal line, so the desktop
+  reports the real port and the real reason (database lock, port in use, bad seed) rather than
+  a blank window. A busy port causes a retry on a free port; it never attaches to a stranger.
+- **Native reports** — inside the desktop the owner opens a record's report in the Windows
+  default application and picks files through a native dialog. The page never supplies a path:
+  attach uses a single-use expiring token, open uses the server's managed-report resolution and
+  is re-checked against the managed folder. There is no shell and no filesystem browser.
+- **Loopback-gated path lookup** — `GET /api/records/:id/report-path` exists only when the
+  server was started by the desktop *and* the connection is loopback. A LAN client cannot
+  obtain a host path.
+- **Still a TEST build** — no authentication, no TLS, no code signing. LAN stays off by
+  default; enabling it restarts the server bound to `0.0.0.0`, and the Windows Private-network
+  firewall may need the owner's approval. This app never changes the firewall.
+
 ## Phase 4 acceptance
 
 The real-workbook integration test reads the validation workbook without modifying it and uses an isolated `fake-indexeddb` database. With the 191-record seed, its first import is 110 new rows; a repeat is 110 unchanged rows, with app-managed PIC/notes/CA link retained. The test is skipped when the workbook fixture is absent. Browser interaction remains a user acceptance step; see [`docs/phase4-user-acceptance-checklist.md`](docs/phase4-user-acceptance-checklist.md).
@@ -84,10 +110,12 @@ The real-workbook integration test reads the validation workbook without modifyi
 ## Checks
 
 ```bash
-npm test              # full suite (browser logic + server runtime)
-npm run test:server   # server/SQLite/LAN/audit/backup/report suite only
-npm run typecheck     # browser project + server project
-npm run build         # production browser bundle
+npm test               # full suite (browser logic + server runtime + portable)
+npm run test:server    # server/SQLite/LAN/audit/backup/report suite only
+npm run test:portable  # desktop layout, settings, bridge security, startup handshake
+npm run typecheck      # browser + server + desktop projects
+npm run build          # production browser bundle
+npm run build:desktop  # compiled Electron main + preload
 npm audit
 git diff --check
 ```
@@ -104,4 +132,6 @@ npm run migrate:indexeddb -- --file tnp-indexeddb-export-….json
 npm run migrate:indexeddb -- --file tnp-indexeddb-export-….json --confirm
 ```
 
-This repository remains development-only. No installer, portable build, `.exe`, auto-updater, production release or deployment is created.
+This repository remains development-only. Since Phase 6 a **portable TEST folder** can be built
+with `npm run package:portable`; there is still no installer, no auto-updater, no code signing,
+no production release and no deployment.

@@ -4,6 +4,7 @@ import { translate } from '../i18n';
 import { serverApi } from '../app/services';
 import type { AuditSummary, BackupSummary, ServerStatus } from '../services/server/serverRecordRepository';
 import { downloadExport, exportIndexedDbData } from '../services/server/browserExport';
+import { DesktopPanel } from '../components/DesktopPanel';
 
 interface SystemStatusPageProps {
   locale: Locale;
@@ -163,6 +164,9 @@ export default function SystemStatusPage({ locale, status, onStatusRefreshed }: 
           <code className="command-line">npm run migrate:indexeddb -- --file &lt;export.json&gt; --confirm</code>
         </article>
       </div>
+
+      {/* Rendered only inside the Windows TEST wrapper; absent in a browser tab. */}
+      <DesktopPanel locale={locale} onServerRestarted={onStatusRefreshed} />
 
       <article className="panel history-panel">
         <header className="history-head">
