@@ -9,8 +9,10 @@
  *   TNP Defect Management TEST.exe        Electron launcher
  *   *.dll, *.pak, ...                     Electron runtime
  *   resources/app/                        this app
- *     package.json                        main -> dist/main/main.js
- *     dist/                               compiled desktop main + preload (CommonJS)
+ *     package.json                        main -> dist/desktop/main/main.js
+ *     dist/                               the whole of dist-desktop (CommonJS):
+ *       desktop/main/, desktop/preload/     the desktop wrapper
+ *       server/                             modules the desktop imports from server/
  *     server-runtime/                     compiled Phase 5 server (CommonJS, node: only)
  *     seed/legacy-base-data.json          the 191 canonical records
  *     web/                                built React UI
@@ -45,7 +47,7 @@ const repoRoot = resolve(here, '..');
 const argv = parseArgs(process.argv.slice(2));
 const APP_NAME = 'TNP Defect Management TEST';
 const FOLDER_NAME = argv.folderName ?? 'TNP-Defect-Management-TEST-win-x64';
-const ARTIFACTS_DIR = resolve(repoRoot, 'artifacts');
+const ARTIFACTS_DIR = argv.out ? resolve(argv.out) : resolve(repoRoot, 'artifacts');
 const CACHE_DIR = resolve(repoRoot, '.cache');
 
 const pkg = JSON.parse(readFileSync(resolve(repoRoot, 'package.json'), 'utf8'));
@@ -98,7 +100,14 @@ async function main() {
   mkdirSync(appDir, { recursive: true });
 
   line('Copying the desktop wrapper…');
-  cpSync(resolve(repoRoot, 'dist-desktop', 'desktop'), resolve(appDir, 'dist'), { recursive: true });
+  // The whole of dist-desktop, not just dist-desktop/desktop. tsc emits the desktop program
+  // with its original directory shape, so the compiled desktop/main/serverProcess.js imports
+  // "../../server/startupSignals" and expects dist-desktop/server/ to sit beside
+  // dist-desktop/desktop/. Copying only the desktop subtree silently drops that sibling and
+  // the packaged app dies at startup with "Cannot find module". Copying the output tree
+  // verbatim keeps the complete module closure intact, including anything the desktop
+  // imports from server/ in future.
+  cpSync(resolve(repoRoot, 'dist-desktop'), resolve(appDir, 'dist'), { recursive: true });
 
   line('Copying the Phase 5 server runtime…');
   cpSync(resolve(repoRoot, 'dist-server'), resolve(appDir, 'server-runtime'), { recursive: true });
@@ -117,7 +126,7 @@ async function main() {
         version: pkg.version ?? '0.0.0',
         // CommonJS: both the desktop wrapper and the server runtime are compiled to it.
         type: 'commonjs',
-        main: 'dist/main/main.js',
+        main: 'dist/desktop/main/main.js',
         private: true,
       },
       null,
@@ -262,8 +271,10 @@ function verifyPackage(target) {
 
   const checks = [
     'resources/app/package.json',
-    'resources/app/dist/main/main.js',
-    'resources/app/dist/preload/preload.js',
+    'resources/app/dist/desktop/main/main.js',
+    'resources/app/dist/desktop/preload/preload.js',
+    // The desktop main process requires this from ../../server/, so it must travel with it.
+    'resources/app/dist/server/startupSignals.js',
     'resources/app/server-runtime/server/index.js',
     'resources/app/server-runtime/package.json',
     'resources/app/seed/legacy-base-data.json',
@@ -366,7 +377,9 @@ function parseArgs(args) {
     const match = /^--([\w-]+)(?:=(.*))?$/u.exec(arg);
     if (!match) continue;
     const [, key, value] = match;
-    out[key] = value === undefined ? true : value;
+    // Accept --folder-name and --folderName alike.
+    const camel = key.replace(/-([a-z])/gu, (_all, letter) => letter.toUpperCase());
+    out[camel] = value === undefined ? true : value;
   }
   return out;
 }

@@ -267,5 +267,12 @@ browser. The preload exposes nine named channels, with `contextIsolation` on,
 `scripts/package-portable.mjs` assembles a plain folder — Electron runtime plus
 `resources/app/{dist,server-runtime,seed,web}` — with no installer and no release. It refuses
 to ship the company workbook or any runtime folder, verifies the seed is exactly 191 records,
-and verifies the assembled tree. If the pinned Electron runtime cannot be downloaded the
+and verifies the assembled tree.
+
+`resources/app/dist` must be the whole of `dist-desktop`, preserving the layout `tsc` emitted.
+The desktop main process requires `../../server/startupSignals`, so `dist/server/` has to sit
+beside `dist/desktop/`; copying only the `desktop/` subtree yields a folder that assembles
+cleanly and then fails at startup. `tests/portable/runtime.test.ts` assembles a real build
+against a stand-in runtime, walks every `require()` in the packaged chain resolving it as Node
+would, and actually loads the packaged `serverProcess` and `startupSignals` modules. If the pinned Electron runtime cannot be downloaded the
 script reports `BLOCKED` and changes nothing: no version bump, no mirror substitution.

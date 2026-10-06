@@ -20,7 +20,9 @@
     "build:portable": "npm run build && npm run build:server && npm run build:desktop",
     "package:portable": "npm run build:portable && node scripts/package-portable.mjs",
     "desktop": "node scripts/dev-desktop.mjs",
-    "test:portable": "vitest run tests/portable"
+    "test:portable": "vitest run tests/portable",
+    "build:portable-server": "npm run build:server",
+    "test:portable-runtime": "vitest run tests/portable/runtime.test.ts"
   },
   "dependencies": {
     "@e965/xlsx": "^0.20.3",

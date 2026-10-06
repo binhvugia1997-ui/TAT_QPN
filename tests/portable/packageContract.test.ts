@@ -15,6 +15,16 @@ import { describe, expect, it } from 'vitest';
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const read = (relative: string) => readFileSync(path.join(repoRoot, relative), 'utf8');
 
+/**
+ * Strips block and line comments so assertions about code are not tripped by prose that
+ * merely mentions an identifier.
+ */
+function codeOnly(source: string): string {
+  return source
+    .replace(/\/\*[\s\S]*?\*\//gu, '')
+    .replace(/^\s*\/\/.*$/gmu, '');
+}
+
 describe('portable package contract', () => {
   const desktopTsConfig = JSON.parse(read('tsconfig.desktop.json')) as {
     compilerOptions: { outDir: string; module: string };
@@ -38,14 +48,24 @@ describe('portable package contract', () => {
   it('names an Electron entry that matches the compiled layout after copying', () => {
     const packager = read('scripts/package-portable.mjs');
 
-    // The packager copies dist-desktop/desktop -> resources/app/dist, so the compiled
-    // desktop/main/main.js lands at resources/app/dist/main/main.js.
-    expect(packager).toContain("'dist-desktop', 'desktop'");
-    expect(packager).toContain("main: 'dist/main/main.js'");
+    // The packager must copy the whole of dist-desktop so the sibling dist-desktop/server/
+    // output travels with dist-desktop/desktop/. Copying only the desktop subtree is what
+    // broke the Windows build: serverProcess.js requires ../../server/startupSignals.
+    expect(packager).toContain("cpSync(resolve(repoRoot, 'dist-desktop'), resolve(appDir, 'dist')");
+    expect(packager).not.toContain("'dist-desktop', 'desktop'");
+    expect(packager).toContain("main: 'dist/desktop/main/main.js'");
 
-    // And main.ts must resolve the preload from dist/main/ to dist/preload/preload.js.
+    // main.ts resolves the preload from dist/desktop/main/ to dist/desktop/preload/preload.js.
     const main = read('desktop/main/main.ts');
     expect(main).toContain("'..', 'preload', 'preload.js'");
+  });
+
+  it('verifies the packaged tree contains the desktop process module closure', () => {
+    const packager = read('scripts/package-portable.mjs');
+    // verifyPackage must fail the build if the sibling module is missing, not just check
+    // that the entry file exists.
+    expect(packager).toContain("'resources/app/dist/server/startupSignals.js'");
+    expect(packager).toContain("'resources/app/dist/desktop/main/main.js'");
   });
 
   it('copies the server runtime where the packaged path resolver looks for it', () => {
@@ -92,8 +112,8 @@ describe('portable package contract', () => {
     expect(packager).toContain('was NOT changed');
     // A refused download must not leave a half-built folder behind.
     expect(packager).toContain('no mirror was substituted');
-    // An ESM script cannot use require(); that would be a hard runtime failure.
-    expect(packager).not.toContain('require(');
+    // An ESM script cannot call require(); that would be a hard runtime failure.
+    expect(codeOnly(packager)).not.toContain('require(');
   });
 
   it('pins Electron in package.json so the build is reproducible', () => {

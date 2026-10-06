@@ -19,8 +19,10 @@ append-only.
 TNP Defect Management TEST.exe     double-click to run
 *.dll, *.pak, locales/, ...        Electron runtime
 resources/app/
-  package.json                     Electron entry: dist/main/main.js
-  dist/main/, dist/preload/        compiled desktop wrapper (CommonJS)
+  package.json                     Electron entry: dist/desktop/main/main.js
+  dist/desktop/main/               compiled desktop main process (CommonJS)
+  dist/desktop/preload/            compiled preload bridge
+  dist/server/                     modules the desktop imports from server/ (startupSignals)
   server-runtime/                  the Phase 5 server, unchanged (node: builtins only)
   seed/legacy-base-data.json       the 191 canonical records
   web/                             the built React UI
@@ -29,6 +31,16 @@ READ ME FIRST.txt                  owner instructions
 
 There is no installer, no registry write, no administrator requirement and no GitHub
 Release. Deleting the folder removes the app.
+
+`resources/app/dist` is the **whole** of `dist-desktop`, not just its `desktop/` subtree. `tsc`
+emits the desktop program with its original directory shape, so
+`dist/desktop/main/serverProcess.js` contains `require("../../server/startupSignals")` and
+needs `dist/server/` sitting beside it. Copying only the `desktop/` subtree produced a folder
+that assembled cleanly and then died on launch with `Cannot find module
+'../../server/startupSignals'`. Shipping the compiler output verbatim keeps the entire require
+closure intact, including anything the desktop imports from `server/` later.
+`tests/portable/runtime.test.ts` assembles a real build and resolves that chain the way Node
+does, so this cannot regress silently.
 
 ## 2. Where data lives
 
@@ -146,10 +158,13 @@ the official `github.com` release. Options:
 | `--zip` | also produce `…-win-x64.zip` (uses PowerShell on Windows) |
 | `--platform=win32 --arch=x64` | target runtime (defaults to `win32-x64`) |
 | `--electron-version=<v>` | override the pinned version, if ever needed |
+| `--out=<dir>` | write the folder somewhere other than `artifacts/` (used by the tests) |
+| `--folder-name=<name>` | override the folder name |
 
 Before writing anything, the script verifies the seed contains exactly 191 records and refuses
 to ship the company workbook, or any `data/`, `backups/` or `reports/` folder. After
-assembling, it verifies the launcher and seven packaged files exist.
+assembling, it verifies the launcher and eight packaged files exist, including
+`dist/server/startupSignals.js`.
 
 **If the Electron download is blocked**, the script stops and prints `BLOCKED` with the exact
 version and URL it wanted. It does **not** change the pinned version, does **not** substitute a
@@ -181,6 +196,7 @@ For wrapper development without packaging: `npm run desktop`.
 | `desktop/types/tnpDesktop.ts` | the shared bridge type |
 | `server/startupSignals.ts` | `TNP_READY` / `TNP_FATAL` handshake lines |
 | `scripts/package-portable.mjs` | portable folder assembler |
+| `tests/portable/runtime.test.ts` | assembles a real build and resolves/loads the packaged require chain |
 | `tests/portable/` | layout, settings, bridge security, handshake, packaged contract |
 
 `paths.ts` and `bridgeCore.ts` are deliberately Electron-free so their rules are unit tested
