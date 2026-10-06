@@ -6,10 +6,36 @@ Development-only local-first TNP defect tracking workspace. The legacy HTML was 
 
 ```bash
 npm ci
-npm run dev
+npm run dev        # builds the local server, then runs server + Vite
 ```
 
-Vite binds to `0.0.0.0` for the Arena live preview. The app uses browser-local IndexedDB and makes no API/cloud calls. First run adds the immutable-derived 191-record seed only where IDs do not already exist. The canonical model retains all 34 original source fields and recognized extensions.
+`npm run dev` starts the authoritative Node/SQLite server on `127.0.0.1:8787` and the Vite dev
+server, which proxies `/api` to it. Other useful commands:
+
+```bash
+npm start          # server only (builds first)
+npm start:lan      # server bound to 0.0.0.0, for trusted-LAN use
+npm run build      # browser bundle into dist/, which the server also serves
+```
+
+Since **Phase 5** the authoritative runtime database is **SQLite at `data/tnp.db`, owned by the
+local Node server**. The path is:
+
+```
+React → API data service → local Node server → SQLite
+```
+
+The browser never opens the database file. First run creates the schema, applies migrations and
+seeds exactly the 191 canonical records; an existing database is never reseeded or overwritten.
+The canonical model retains all 34 original source fields and recognized extensions.
+
+Runtime data lives in `data/`, `backups/` and `reports/` at the project root. All three are
+gitignored and outside the build output, so rebuilding never destroys operator data. See
+[`docs/phase5-server-runtime.md`](docs/phase5-server-runtime.md).
+
+> LAN access is **off** by default. Enable it explicitly with `--lan` or `TNP_LAN=1` and
+> restart. LAN mode has **no authentication and no TLS** — trusted internal networks only, and
+> other PCs may need the app allowed through the Windows Private-network firewall.
 
 ## Phase 1–3 workspace
 
@@ -26,6 +52,31 @@ The existing-record TNP sync whitelist remains exactly `status` and `dueDate`; `
 
 Existing legacy `overrides`, imported/manual records and import history are scoped to the legacy browser origin; this app does not access or delete them. Cross-origin data needs an explicit, separately confirmed export/import migration.
 
+## Phase 5 acceptance
+
+The local server owns SQLite, append-only audit history, optimistic concurrency, backups and
+managed report storage; the browser is a client. Concretely:
+
+- **Concurrency** — every record carries a revision. Saving a stale revision returns
+  **HTTP 409**; the drawer refetches and asks the operator to review, so two workstations never
+  silently overwrite each other.
+- **Audit** — one save produces one grouped event with the changed fields and their old/new
+  values. The table is append-only, enforced by SQL triggers. Client address and label identify
+  a connection, not a person.
+- **Backups** — SQLite online snapshots, automatically each day, before every import, and on
+  demand, with bounded retention. Destructive one-click restore is deliberately **not** offered.
+- **Reports** — attached to a canonical record id and served only through the server. Traversal,
+  encoded traversal, absolute paths and file/directory symlink escapes are all rejected. A
+  missing report is reported explicitly and keeps its link; unlinking keeps the stored bytes.
+- **Migration** — from the old browser IndexedDB is explicit only: a read-only export, a
+  dry run, then `--confirm`. Nothing is migrated automatically.
+- **System page** (`/system`) — server status, LAN status and usable URLs, backup control,
+  change history, and the browser-data export.
+
+Phase 1–4 behavior is unchanged: the canonical record model, the 191-record seed, all 34 source
+fields and `sourceExtras`, Home, Records, Analysis, TAT Monitoring, Corrective Actions,
+Rejected, effective TAT, priority sorting and the import parser.
+
 ## Phase 4 acceptance
 
 The real-workbook integration test reads the validation workbook without modifying it and uses an isolated `fake-indexeddb` database. With the 191-record seed, its first import is 110 new rows; a repeat is 110 unchanged rows, with app-managed PIC/notes/CA link retained. The test is skipped when the workbook fixture is absent. Browser interaction remains a user acceptance step; see [`docs/phase4-user-acceptance-checklist.md`](docs/phase4-user-acceptance-checklist.md).
@@ -33,10 +84,24 @@ The real-workbook integration test reads the validation workbook without modifyi
 ## Checks
 
 ```bash
-npm test
-npm run typecheck
+npm test              # full suite (browser logic + server runtime)
+npm run test:server   # server/SQLite/LAN/audit/backup/report suite only
+npm run typecheck     # browser project + server project
+npm run build         # production browser bundle
 npm audit
 git diff --check
+```
+
+## Migrate old browser data
+
+Phase 5 never imports browser data on its own. To move an existing IndexedDB database across:
+
+```bash
+# 1. System page → "Export browser data (read-only)" → downloads a JSON file
+# 2. inspect what would change, without writing anything
+npm run migrate:indexeddb -- --file tnp-indexeddb-export-….json
+# 3. apply it (creates a backup first)
+npm run migrate:indexeddb -- --file tnp-indexeddb-export-….json --confirm
 ```
 
 This repository remains development-only. No installer, portable build, `.exe`, auto-updater, production release or deployment is created.

@@ -1,10 +1,12 @@
 import { NavLink, Outlet } from 'react-router-dom';
 import type { Locale, MessageKey } from '../i18n';
 import { translate } from '../i18n';
+import type { ServerStatus } from '../services/server/serverRecordRepository';
 
 interface AppLayoutProps {
   locale: Locale;
   onLocaleChange: (locale: Locale) => void;
+  status?: ServerStatus;
 }
 
 const navigation: { to: string; label: MessageKey; end?: boolean }[] = [
@@ -14,9 +16,15 @@ const navigation: { to: string; label: MessageKey; end?: boolean }[] = [
   { to: '/tat', label: 'tat' },
   { to: '/corrective-actions', label: 'corrective' },
   { to: '/rejected', label: 'rejected' },
+  { to: '/system', label: 'system' },
 ];
 
-export default function AppLayout({ locale, onLocaleChange }: AppLayoutProps) {
+export default function AppLayout({ locale, onLocaleChange, status }: AppLayoutProps) {
+  const lanEnabled = status?.server.lanEnabled ?? false;
+  const storageLabel = status
+    ? translate(locale, lanEnabled ? 'serverLanOn' : 'serverLocalOnly')
+    : translate(locale, 'serverStarting');
+
   return (
     <div className="app-frame">
       <header className="topbar">
@@ -28,7 +36,10 @@ export default function AppLayout({ locale, onLocaleChange }: AppLayoutProps) {
           </div>
         </div>
         <div className="topbar-tools">
-          <span className="local-badge"><span className="local-dot" />{translate(locale, 'localStorage')}</span>
+          <span className={`local-badge${lanEnabled ? ' lan-enabled' : ''}`} title={status?.security.warning}>
+            <span className="local-dot" />
+            {storageLabel}
+          </span>
           <label className="language-control">
             <span>{translate(locale, 'language')}</span>
             <select value={locale} onChange={(event) => onLocaleChange(event.target.value as Locale)}>

@@ -1,9 +1,11 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent } from 'react';
 import type { Locale } from '../i18n';
 import { translate } from '../i18n';
 import type { DefectRecord } from '../models/defect-record';
 import { LEGACY_STATUS_VALUES } from '../business/status/status';
-import { recordService } from '../app/services';
+import { recordService, serverApi } from '../app/services';
+import { RecordConflictError } from '../services/server/apiClient';
+import type { AuditSummary, ReportSummary } from '../services/server/serverRecordRepository';
 
 interface RecordDetailDrawerProps {
   locale: Locale;
@@ -59,27 +61,53 @@ function initialEditableFields(record: DefectRecord): EditableFields {
 
 export default function RecordDetailDrawer({ locale, record, onClose, onSaved }: RecordDetailDrawerProps) {
   const [form, setForm] = useState<EditableFields>(() => initialEditableFields(record));
+  const [current, setCurrent] = useState<DefectRecord>(record);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [errorDetails, setErrorDetails] = useState('');
+  const [conflict, setConflict] = useState('');
   const [refreshWarning, setRefreshWarning] = useState(false);
   const [refreshDetails, setRefreshDetails] = useState('');
   const [saved, setSaved] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [history, setHistory] = useState<AuditSummary[]>([]);
+  const [report, setReport] = useState<{ state: 'attached' | 'no-report' | 'unavailable'; report: ReportSummary | null }>({
+    state: 'no-report',
+    report: null,
+  });
+  const [reportBusy, setReportBusy] = useState(false);
   const onCloseRef = useRef(onClose);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const savingRef = useRef(saving);
   onCloseRef.current = onClose;
   savingRef.current = saving;
 
+  const reloadServerState = useCallback(async (target: DefectRecord) => {
+    try {
+      const [historyResult, reportResult] = await Promise.all([
+        serverApi.recordHistory(target.id, 20),
+        serverApi.reportInfo(target.id),
+      ]);
+      setHistory(historyResult.events);
+      setReport(reportResult);
+    } catch {
+      // History and report state are supplementary; a failure must not block editing.
+      setHistory([]);
+      setReport({ state: 'no-report', report: null });
+    }
+  }, []);
+
   useEffect(() => {
     setForm(initialEditableFields(record));
+    setCurrent(record);
     setError('');
     setErrorDetails('');
+    setConflict('');
     setRefreshWarning(false);
     setRefreshDetails('');
     setSaved(false);
-  }, [record.id]);
+    void reloadServerState(record);
+  }, [record.id, record, reloadServerState]);
 
   useEffect(() => {
     const closeOnEscape = (event: KeyboardEvent) => {
@@ -99,14 +127,15 @@ export default function RecordDetailDrawer({ locale, record, onClose, onSaved }:
     };
   }, []);
 
-  const sourceFields = useMemo(() => Object.entries(record)
-    .filter(([key]) => !EDITABLE_FIELDS.has(key) && key !== 'recordSource')
-    .sort(([left], [right]) => left.localeCompare(right)), [record]);
+  const sourceFields = useMemo(() => Object.entries(current)
+    .filter(([key]) => !EDITABLE_FIELDS.has(key) && key !== 'recordSource' && key !== 'version')
+    .sort(([left], [right]) => left.localeCompare(right)), [current]);
 
   const update = (field: keyof EditableFields, value: string) => {
-    setForm((current) => ({ ...current, [field]: value }));
+    setForm((currentForm) => ({ ...currentForm, [field]: value }));
     setError('');
     setErrorDetails('');
+    setConflict('');
     setRefreshWarning(false);
     setRefreshDetails('');
     setSaved(false);
@@ -138,10 +167,64 @@ export default function RecordDetailDrawer({ locale, record, onClose, onSaved }:
         setRefreshDetails(reason instanceof Error ? reason.message : String(reason));
       }
     } catch (reason) {
-      setError(translate(locale, 'saveFailed'));
-      setErrorDetails(reason instanceof Error ? reason.message : String(reason));
+      if (reason instanceof RecordConflictError) {
+        // Another client saved first. Refetch so the operator reviews the current values
+        // instead of silently overwriting them.
+        setConflict(translate(locale, 'saveConflict', {
+          theirs: reason.currentVersion,
+          yours: reason.expectedVersion,
+        }));
+        try {
+          const refreshed = await recordService.getRecord(record.id);
+          if (refreshed) {
+            setCurrent(refreshed);
+            setForm(initialEditableFields(refreshed));
+          }
+        } catch {
+          // Keep the form as-is if the refetch fails; the conflict is still reported.
+        }
+        void reloadServerState(record);
+      } else {
+        setError(translate(locale, 'saveFailed'));
+        setErrorDetails(reason instanceof Error ? reason.message : String(reason));
+      }
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function attachReport(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+    setReportBusy(true);
+    setError('');
+    try {
+      await serverApi.attachReport(record.id, file);
+      const result = await serverApi.reportInfo(record.id);
+      setReport(result);
+      void reloadServerState(record);
+    } catch (reason) {
+      setError(translate(locale, 'reportAttachFailed'));
+      setErrorDetails(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setReportBusy(false);
+    }
+  }
+
+  async function unlinkReport() {
+    setReportBusy(true);
+    setError('');
+    try {
+      await serverApi.unlinkReport(record.id);
+      const result = await serverApi.reportInfo(record.id);
+      setReport(result);
+      void reloadServerState(record);
+    } catch (reason) {
+      setError(translate(locale, 'reportUnlinkFailed'));
+      setErrorDetails(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setReportBusy(false);
     }
   }
 
@@ -221,6 +304,33 @@ export default function RecordDetailDrawer({ locale, record, onClose, onSaved }:
             )}
           </section>
 
+          <section className="report-section">
+            <h3>{translate(locale, 'reportSectionTitle')}</h3>
+            {report.state === 'attached' && report.report && (
+              <div className="report-row">
+                <code>{report.report.originalName}</code>
+                <span>{Math.round(report.report.sizeBytes / 1024)} KB</span>
+                <a className="secondary-button" href={serverApi.reportUrl(record.id)} target="_blank" rel="noreferrer">
+                  {translate(locale, 'reportOpen')}
+                </a>
+                <button type="button" className="secondary-button" onClick={unlinkReport} disabled={reportBusy}>
+                  {translate(locale, 'reportUnlink')}
+                </button>
+              </div>
+            )}
+            {report.state === 'unavailable' && report.report && (
+              <p className="inline-warning" role="status">
+                {translate(locale, 'reportMissing', { name: report.report.originalName })}
+              </p>
+            )}
+            {report.state === 'no-report' && <p className="hint">{translate(locale, 'reportNone')}</p>}
+            <label className="secondary-button report-upload">
+              {translate(locale, 'reportAttach')}
+              <input type="file" onChange={attachReport} disabled={reportBusy} />
+            </label>
+            <small>{translate(locale, 'reportHelp')}</small>
+          </section>
+
           <details className="source-details">
             <summary>{translate(locale, 'sourceData')} · {sourceFields.length}</summary>
             <dl className="source-field-list">
@@ -237,6 +347,11 @@ export default function RecordDetailDrawer({ locale, record, onClose, onSaved }:
             </dl>
           </details>
 
+          {conflict && (
+            <div role="alert">
+              <p className="inline-error">{conflict}</p>
+            </div>
+          )}
           {error && (
             <div role="alert">
               <p className="inline-error">{error}</p>
@@ -260,6 +375,33 @@ export default function RecordDetailDrawer({ locale, record, onClose, onSaved }:
             </div>
           )}
           {saved && <p className="inline-success" role="status">{translate(locale, 'saved')}</p>}
+
+          <details className="history-details">
+            <summary>{translate(locale, 'recordHistoryTitle')} · {history.length}</summary>
+            <ul className="record-history-list">
+              {history.length === 0 && <li className="empty">{translate(locale, 'noRecordHistory')}</li>}
+              {history.map((event) => (
+                <li key={event.seq}>
+                  <div className="history-line">
+                    <strong>{event.operation}</strong>
+                    <span>{new Date(event.occurredAt).toLocaleString()}</span>
+                  </div>
+                  {event.changes.length > 0 && (
+                    <ul className="change-list">
+                      {event.changes.map((change) => (
+                        <li key={change.field}>
+                          <span>{change.field}</span>
+                          <span className="old">{String(change.oldValue ?? '—')}</span>
+                          <span className="arrow" aria-hidden="true">→</span>
+                          <span className="new">{String(change.newValue ?? '—')}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </details>
           <footer className="drawer-footer">
             <button type="button" className="secondary-button" onClick={onClose} disabled={saving}>{translate(locale, 'close')}</button>
             <button type="submit" className="primary-button" disabled={saving}>

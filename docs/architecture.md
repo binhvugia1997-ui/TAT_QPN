@@ -1,4 +1,4 @@
-# TNP Defect Management System — Development Architecture (Phases 1–3)
+# TNP Defect Management System — Development Architecture (Phases 1–5)
 
 ## 1. Scope and decisions
 
@@ -6,7 +6,11 @@ Phase 1 is a **local-first development web application**. It does not add cloud 
 
 The legacy HTML has been reverse-engineered first; detailed behaviors are in [`legacy-analysis.md`](./legacy-analysis.md). Existing business rules are implemented as pure modules before a full dashboard is started. Any deviation from legacy behavior needs a recorded reason and, where business intent is uncertain, user confirmation.
 
-Phase 2 provides a validated local TNP file-import flow and a compact Records workspace. Phase 3 adds repository-backed Analysis and TAT dashboards plus Corrective Actions and Rejected work views on the shared Records workspace. The approved Phase 2 boundaries and Phase 3 addendum are documented in [`phase2-simplification-review.md`](./phase2-simplification-review.md). Release packaging and production deployment remain out of scope.
+Phase 2 provides a validated local TNP file-import flow and a compact Records workspace. Phase 3 adds repository-backed Analysis and TAT dashboards plus Corrective Actions and Rejected work views on the shared Records workspace. The approved Phase 2 boundaries and Phase 3 addendum are documented in [`phase2-simplification-review.md`](./phase2-simplification-review.md).
+
+Phase 4 validates the flow against the real TNP export workbook.
+
+**Phase 5 changes the authoritative persistence and runtime architecture, not the approved business behavior.** The browser no longer owns the data: a local Node server owns a SQLite database, and React reaches it through an API data service. Every rule from Phases 1–4 is unchanged — the canonical record model, the 191-record seed, all 34 source fields and `sourceExtras`, the Records workspace, the detail drawer, Home, Analysis, TAT Monitoring, Corrective Actions, Rejected, the effective-TAT rule, priority sorting, the import parser and the strict `status` + `dueDate` matched-record whitelist. Phase 5 adds the server, append-only audit history, optimistic concurrency, SQLite backups, managed report storage and explicit IndexedDB migration. Full detail is in [`phase5-server-runtime.md`](./phase5-server-runtime.md). Release packaging and production deployment remain out of scope.
 
 ## 2. Dependency direction
 
@@ -46,7 +50,14 @@ See section B in the legacy analysis for per-field meaning, source, editability 
 
 ## 4. Persistence design
 
-### IndexedDB schema (development v1)
+**Since Phase 5 the authoritative runtime database is SQLite, owned by the local Node server.**
+The browser never opens the database file and never receives a path to it. The IndexedDB
+design below is retained because the old store still exists in operators' browsers and is
+the source for the explicit one-way migration; the runtime code path is
+`React → API data service → local Node server → SQLite`. See
+[`phase5-server-runtime.md`](./phase5-server-runtime.md) and section 11.
+
+### IndexedDB schema (legacy development store, isolated since Phase 5)
 
 Database name is namespaced for the new app and does not overwrite the legacy database. Stores:
 
@@ -110,6 +121,98 @@ Parser validation errors identify the source row/field where available and block
 
 Vitest tests pure status/TAT/duplicate/KPI/filters logic and IndexedDB repository operations with `fake-indexeddb`. Required persistence cases include add, update without ID change, reload from a new repository instance, bulk write, import history, and protection against repeated duplicate imports. Tests use isolated database names and never touch the user’s browser data.
 
-## 10. Deferred work (not implemented in Phase 3)
+## 10. Deferred work
 
-Manual record-entry UI, CSV export, arbitrary local-path opening for CA files, persisted personal filter preferences, explicit browser-origin legacy-data migration, advanced backup/restore and destructive data controls remain deferred. Installer/portable/executable, auto-updater, production release and deployment remain explicitly out of scope. The legacy on-time KPI denominator and status semantics for `Đợi duyệt` / `Đợi xét` are unchanged and are not redefined by Analysis.
+Manual record-entry UI, CSV export, persisted personal filter preferences and native Windows
+file opening for CA files remain deferred. Destructive one-click restore/reset is deliberately
+**not** implemented: backups are listed and sized, and a restore is a manual operator action
+taken while the server is stopped. Authentication, TLS and any public-Internet exposure are
+out of scope. Installer/portable/executable, auto-updater, production release and deployment
+remain explicitly out of scope. The legacy on-time KPI denominator and status semantics for
+`Đợi duyệt` / `Đợi xét` are unchanged and are not redefined by Analysis.
+
+## 11. Phase 5 server runtime
+
+### Dependency direction
+
+```
+React UI → src/services/server (API data service) → HTTP → server/ (Node) → SQLite (data/tnp.db)
+```
+
+UI components contain no SQL and no server logic. `ServerRecordRepository` implements the same
+`RecordStore` surface the IndexedDB repository did, so the approved `RecordService` runs
+unchanged against either backend.
+
+### SQLite schema
+
+`PRAGMA user_version` is the schema level; migrations are an ordered, append-only list and run
+once inside a transaction. Version 1 creates `records`, `audit_events`, `import_history`,
+`reports`, `report_files`, `backups` and `metadata`.
+
+`records` stores the full canonical record as a JSON `payload` — which keeps all 34 source
+fields, `sourceExtras` and any extension field losslessly — plus indexed projection columns
+(`mgmt_no`, `status`, `fingerprint`, dates) and a `version` revision counter. Record identity
+keeps its type: `id_key` is `number:1` or `string:i-…`, so `1` and `"1"` never collide.
+Record ordering mirrors the IndexedDB store (numeric ids first, then string ids) because the
+shared identity index is last-entry-wins.
+
+`audit_events` is append-only, enforced by `BEFORE UPDATE` / `BEFORE DELETE` triggers that
+`RAISE(ABORT)`.
+
+### Seeding and idempotency
+
+A fresh database is seeded with exactly the 191 canonical records and a seed marker, in one
+transaction. An existing database is never reseeded or overwritten; startup is idempotent and
+reports `alreadyInitialized`.
+
+### Optimistic concurrency
+
+Every record carries a revision. A write must present the revision it read
+(`expectedVersion`); a stale write is rejected with **HTTP 409** and the client refetches, so
+two workstations can never silently overwrite each other.
+
+### Audit history
+
+One save produces one grouped event carrying the timestamp, operation, canonical record id,
+management number, every changed field with old and new values, the import batch id, the
+transport client address and an optional self-declared workstation label. The address and label
+identify a connection, **not** a person. Anything that looks like an absolute host path is
+reduced to its file name before storage, and report bytes never enter history.
+
+### Backups
+
+Snapshots use SQLite's own online backup API, which is safe on a live WAL database — a plain
+file copy is never used. Three kinds exist: an automatic daily snapshot on the first write of
+each calendar day, a pre-import snapshot taken before every import transaction, and manual
+snapshots. Retention is bounded, so the folder cannot grow without bound.
+
+### Reports
+
+Reports are linked to a canonical record id; the file name is never identity. Stored names are
+server-generated and may not contain a path separator, traversal sequence or absolute path.
+Containment is verified lexically **and** on the real path, so file and directory symlinks
+cannot escape managed storage. A missing file reports an explicit unavailable state and keeps
+its link; unlinking removes only the association and leaves the bytes on disk. There is no
+general filesystem endpoint.
+
+### Import transaction
+
+`pre-import backup → transaction (match, whitelist sync, audit, import history) → commit`.
+Any failure rolls the transaction back, so a partially applied import is impossible. The
+matched-record whitelist remains exactly `status` and `dueDate`, enforced by the same shared
+module the browser preview uses.
+
+### LAN
+
+The server binds `127.0.0.1` by default. LAN exposure requires an explicit `--lan`,
+`TNP_LAN=1` or `data/server.json`, and binds `0.0.0.0`. No owner IP is hardcoded, no firewall
+rule is modified, and the status endpoint reports the live bind address, the actual port, the
+LAN state and usable LAN URLs. LAN mode has **no authentication and no TLS** and must only be
+used on a trusted internal network; other PCs may need the app allowed through the Windows
+Private-network firewall. Configuration is deliberately not writable over HTTP, so a LAN client
+cannot change it.
+
+### Process ownership
+
+A lock file in `data/` ensures one server owns a data directory at a time. A second start is
+refused with an explicit message; a stale lock from a dead process is taken over.

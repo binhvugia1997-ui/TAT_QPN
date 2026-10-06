@@ -1,0 +1,32 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "module": "CommonJS",
+    "moduleResolution": "Node10",
+    "verbatimModuleSyntax": false,
+    "allowImportingTsExtensions": false,
+    "resolveJsonModule": false,
+    "noEmit": false,
+    "declaration": false,
+    "sourceMap": false,
+    "outDir": "dist-server",
+    "rootDir": ".",
+    "types": [
+      "node"
+    ],
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true
+  },
+  "include": [
+    "server/**/*.ts",
+    "src/business/**/*.ts",
+    "src/models/**/*.ts",
+    "src/utils/**/*.ts"
+  ],
+  "exclude": [
+    "**/*.test.ts",
+    "node_modules",
+    "dist",
+    "dist-server"
+  ]
+}
