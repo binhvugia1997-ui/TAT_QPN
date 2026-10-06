@@ -102,6 +102,37 @@ reports the usable LAN addresses it detects.
 owner to allow the app on **Private networks** through the Windows prompt; if other PCs still
 cannot connect, that is the setting to check.
 
+## 4b. Serving the UI, and never showing a blank window
+
+The window loads `http://127.0.0.1:<port>/` from the owned server, which serves the packaged
+`resources/app/web` bundle. Two rules make that reliable:
+
+- **Nested static paths.** Bundle assets live in `assets/`, so the static handler resolves them
+  with a subdirectory-capable containment check. The flat managed-storage resolver (which
+  forbids path separators, correctly, for reports and backups) must not be reused here: doing so
+  made every `/assets/...` request fail, and the handler answered with `index.html` and
+  **HTTP 200**. The browser then refused to execute HTML as a JavaScript module and the window
+  rendered completely blank while the title still looked correct.
+- **No silent fallback.** Only a *navigation* (a route such as `/records`, or a request that
+  accepts HTML) falls back to the SPA entry point. A missing asset is a visible **404**, so a
+  broken bundle is reported instead of turning into a white window.
+
+Traversal, encoded traversal, absolute paths, drive letters and symlink escapes are still
+rejected on the static route.
+
+### Diagnostics (TEST build)
+
+`data/desktop-diagnostic.log` records every startup stage: the resolved layout, the server
+spawn and the port it actually bound to, window creation, the URL loaded, load completion,
+whether React actually mounted into `#root`, renderer console warnings and errors, and any
+server exit.
+
+If the interface does not appear, the window is **replaced with a compact error page** naming
+the reason, the port, the failing URL, the diagnostic log path and the data folder — plus a
+native dialog. That covers the server failing, the health check failing, the page failing to
+load, the renderer crashing, and the case where the page loads but renders nothing. No DevTools
+needed to report a failure.
+
 ## 5. Native file bridge
 
 The only Phase 5 limitation Phase 6 removes: the owner can now open a record's attached
@@ -191,12 +222,15 @@ For wrapper development without packaging: `npm run desktop`.
 | `desktop/main/settings.ts` | `desktop-settings.json` read/write with safe defaults |
 | `desktop/main/serverProcess.ts` | spawn, handshake, health, port retry, clean stop |
 | `desktop/main/bridgeCore.ts` | token store, record-id and path validation (no Electron API) |
+| `desktop/main/diagnostics.ts` | startup log and the failure page (no Electron API) |
 | `desktop/main/bridge.ts` | the nine IPC channels |
 | `desktop/preload/preload.ts` | whitelisted `contextBridge` surface |
 | `desktop/types/tnpDesktop.ts` | the shared bridge type |
 | `server/startupSignals.ts` | `TNP_READY` / `TNP_FATAL` handshake lines |
 | `scripts/package-portable.mjs` | portable folder assembler |
 | `tests/portable/runtime.test.ts` | assembles a real build and resolves/loads the packaged require chain |
+| `tests/portable/webAssets.test.ts` | boots the packaged server and fetches `/`, the JS and CSS assets over HTTP |
+| `tests/portable/helpers.ts` | shared assembly of a real portable build against a stand-in runtime |
 | `tests/portable/` | layout, settings, bridge security, handshake, packaged contract |
 
 `paths.ts` and `bridgeCore.ts` are deliberately Electron-free so their rules are unit tested

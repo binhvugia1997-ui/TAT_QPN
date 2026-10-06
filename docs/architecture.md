@@ -262,6 +262,15 @@ before calling `shell.openPath`. There is no `exec`, no `openExternal` and no fi
 browser. The preload exposes nine named channels, with `contextIsolation` on,
 `nodeIntegration` off, `sandbox` on, popups denied and navigation pinned to its own server.
 
+### Static bundle serving
+
+The server serves the built UI from `staticDir`. Bundle assets live in subfolders, so the
+static route resolves them with `resolveContainedSubPath`, which permits nesting while still
+rejecting traversal, absolute paths, drive letters and symlink escapes. The flat
+`resolveContainedPath` remains the rule for reports and backups. A missing asset returns 404;
+only a navigation falls back to the SPA entry point, because answering a `.js` request with
+`index.html` and HTTP 200 makes the browser refuse to execute it and renders a blank window.
+
 ### Packaging
 
 `scripts/package-portable.mjs` assembles a plain folder — Electron runtime plus

@@ -12,7 +12,7 @@ import { describePath } from '../paths';
 import { getLanAddresses } from '../lan';
 import { diffRecords, toApiRecord } from '../db/records';
 import { PayloadTooLargeError, readBody, readClientIp, readClientLabel, readJsonBody, requireObject, requireRows, requireText, optionalText, optionalInteger, parseRecordIdParam, MAX_UPLOAD_BODY_BYTES } from './validation';
-import { resolveContainedPath } from '../services/safePath';
+import { resolveContainedSubPath } from '../services/safePath';
 
 export interface HttpAppOptions {
   context: AppContext;
@@ -464,17 +464,43 @@ export function createHttpServer(options: HttpAppOptions): http.Server {
       return;
     }
 
+    const entryPoint = path.join(directory, 'index.html');
     const requested = decodeURIComponent(url.pathname);
-    const relative = requested === '/' ? 'index.html' : requested.replace(/^\/+/, '');
-    let target: string;
-    try {
-      target = resolveContainedPath(directory, relative);
-    } catch {
-      // Unknown deep links fall back to the SPA entry point.
-      target = path.join(directory, 'index.html');
+    const relative = requested.replace(/^\/+/, '');
+
+    let target: string | null = null;
+    if (relative === '') {
+      target = entryPoint;
+    } else {
+      try {
+        // Nested resolver: bundle assets live in subfolders such as assets/.
+        const resolved = resolveContainedSubPath(directory, relative);
+        if (fs.existsSync(resolved) && fs.statSync(resolved).isFile()) target = resolved;
+      } catch {
+        target = null;
+      }
     }
-    if (!fs.existsSync(target) || !fs.statSync(target).isFile()) {
-      target = path.join(directory, 'index.html');
+
+    if (!target) {
+      // Only a *navigation* falls back to the SPA entry point. A missing asset must be a
+      // visible 404: answering a .js request with index.html and HTTP 200 makes the browser
+      // refuse to execute it, which renders a blank window with a perfectly correct title.
+      if (isNavigationRequest(relative, request)) {
+        target = entryPoint;
+      } else {
+        const body = `Not found: ${relative}`;
+        response.writeHead(404, {
+          ...SECURITY_HEADERS,
+          'Content-Type': 'text/plain; charset=utf-8',
+          'Content-Length': String(Buffer.byteLength(body)),
+        });
+        if (request.method === 'HEAD') {
+          response.end();
+          return;
+        }
+        response.end(body);
+        return;
+      }
     }
 
     const extension = path.extname(target).toLowerCase();
@@ -488,6 +514,18 @@ export function createHttpServer(options: HttpAppOptions): http.Server {
       return;
     }
     fs.createReadStream(target).pipe(response);
+  }
+
+  /**
+   * A navigation is a request for a route rather than for a file: no file extension, or a
+   * client that explicitly accepts HTML. Deep links such as /records must still return the
+   * SPA entry point, as they did before.
+   */
+  function isNavigationRequest(relative: string, request: http.IncomingMessage): boolean {
+    const extension = path.extname(relative).toLowerCase();
+    if (extension === '' || extension === '.html') return true;
+    const accept = request.headers.accept ?? '';
+    return accept.includes('text/html');
   }
 
   return server;

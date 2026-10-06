@@ -70,3 +70,59 @@ export function toSafeFileComponent(value: string, maxLength = 64): string {
     .slice(0, maxLength);
   return cleaned || 'file';
 }
+
+/**
+ * Containment for **nested** read-only trees, used by the static bundle server where files
+ * legitimately live in subfolders such as `assets/`.
+ *
+ * This is deliberately a separate function from `resolveContainedPath`, which forbids path
+ * separators entirely and is the right rule for flat managed storage (reports, backups).
+ * Reusing that rule for the web bundle made every `/assets/...` request fail, and the static
+ * handler answered with `index.html` and HTTP 200 — the browser then refused to execute HTML
+ * as a module and the window rendered blank.
+ *
+ * Traversal, absolute paths, drive letters and symlink escapes are still rejected here.
+ */
+export function resolveContainedSubPath(root: string, relativePath: string): string {
+  if (typeof relativePath !== 'string' || relativePath.length === 0) {
+    throw new StorageSecurityError('A relative path is required.');
+  }
+  if (relativePath.includes('\0')) {
+    throw new StorageSecurityError('The requested path contains an invalid character.');
+  }
+  if (path.isAbsolute(relativePath) || /^[A-Za-z]:/u.test(relativePath)) {
+    throw new StorageSecurityError('The requested path must not be absolute.');
+  }
+
+  // Accept either separator, then reject any component that could escape the root.
+  const segments = relativePath.split(/[\\/]+/u).filter((segment) => segment.length > 0);
+  if (segments.length === 0) {
+    throw new StorageSecurityError('The requested path is empty.');
+  }
+  for (const segment of segments) {
+    if (segment === '.' || segment === '..') {
+      throw new StorageSecurityError('The requested path must not traverse directories.');
+    }
+  }
+
+  const resolvedRoot = path.resolve(root);
+  const candidate = path.resolve(resolvedRoot, ...segments);
+  assertInsideRoot(resolvedRoot, candidate);
+
+  // Second check on the real path, so a symlink inside the tree cannot point outside it.
+  let realRoot: string;
+  try {
+    realRoot = fs.realpathSync(resolvedRoot);
+  } catch {
+    throw new StorageSecurityError('The served directory is not available.');
+  }
+  let realTarget: string;
+  try {
+    realTarget = fs.realpathSync(candidate);
+  } catch {
+    // Missing file: the lexical containment check above already applied.
+    return candidate;
+  }
+  assertInsideRoot(realRoot, realTarget);
+  return realTarget;
+}

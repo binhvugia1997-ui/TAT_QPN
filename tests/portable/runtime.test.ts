@@ -1,13 +1,12 @@
-import { spawnSync } from 'node:child_process';
 import {
   createRequire,
   isBuiltin,
 } from 'node:module';
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { assemblePortableBuild, repoRoot } from './helpers';
+import type { AssembledBuild } from './helpers';
 
 /**
  * Regression test for the Windows UAT failure:
@@ -31,86 +30,23 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
  * layout, the assembler's copy step and Node's module resolution — is the real thing.
  */
 
-const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const require_ = createRequire(path.join(repoRoot, 'noop.js'));
-const pkg = JSON.parse(readFileSync(path.join(repoRoot, 'package.json'), 'utf8')) as {
-  devDependencies: Record<string, string>;
-  scripts: Record<string, string>;
-};
-
-const ELECTRON_VERSION = (pkg.devDependencies.electron ?? '').replace(/^[\^~]/u, '');
-const RUNTIME_DIR_NAME = `electron-v${ELECTRON_VERSION}-win32-x64`;
-const CACHE_DIR = path.join(repoRoot, '.cache');
-const STUB_DIR = path.join(CACHE_DIR, RUNTIME_DIR_NAME);
 
 /** Bare specifiers the packaged desktop is allowed to require without a node_modules folder. */
 const RUNTIME_PROVIDED = new Set(['electron']);
 
-let outDir = '';
-let createdStub = false;
-const buildsRun: string[] = [];
-
-function run(script: string): void {
-  const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm';
-  const result = spawnSync(npm, ['run', script], { cwd: repoRoot, stdio: 'pipe', encoding: 'utf8' });
-  if (result.status !== 0) {
-    throw new Error(`\`npm run ${script}\` failed:\n${result.stderr ?? result.stdout ?? ''}`);
-  }
-  buildsRun.push(script);
-}
-
-function ensureBuilds(): void {
-  if (!existsSync(path.join(repoRoot, 'dist', 'index.html'))) run('build');
-  if (!existsSync(path.join(repoRoot, 'dist-server', 'server', 'index.js'))) run('build:server');
-  if (!existsSync(path.join(repoRoot, 'dist-desktop', 'desktop', 'main', 'main.js'))) run('build:desktop');
-}
-
-/** A stand-in Electron runtime: enough of a tree for the assembler, no network needed. */
-function ensureStubRuntime(): void {
-  if (existsSync(path.join(STUB_DIR, 'electron.exe')) || existsSync(path.join(STUB_DIR, 'TNP Defect Management TEST.exe'))) {
-    return;
-  }
-  mkdirSync(path.join(STUB_DIR, 'resources'), { recursive: true });
-  writeFileSync(path.join(STUB_DIR, 'electron.exe'), 'stub-runtime');
-  writeFileSync(path.join(STUB_DIR, 'electron.dll'), 'stub');
-  writeFileSync(path.join(STUB_DIR, 'resources', 'default_app.asar'), '{}');
-  createdStub = true;
-}
+let build: AssembledBuild;
 
 beforeAll(() => {
-  ensureBuilds();
-  ensureStubRuntime();
-
-  outDir = path.join(tmpdir(), `tnp-portable-runtime-${process.pid}`);
-  rmSync(outDir, { recursive: true, force: true });
-  mkdirSync(outDir, { recursive: true });
-
-  const result = spawnSync(process.execPath, [path.join(repoRoot, 'scripts', 'package-portable.mjs'), `--out=${outDir}`], {
-    cwd: repoRoot,
-    stdio: 'pipe',
-    encoding: 'utf8',
-  });
-  if (result.status !== 0) {
-    throw new Error(`The portable assembler failed:\n${result.stdout ?? ''}\n${result.stderr ?? ''}`);
-  }
+  build = assemblePortableBuild('runtime');
 }, 300_000);
 
 afterAll(() => {
-  if (outDir) rmSync(outDir, { recursive: true, force: true });
-  if (!createdStub) return;
-  rmSync(STUB_DIR, { recursive: true, force: true });
-  // Leave no empty .cache behind, but never touch a cache that holds a real runtime.
-  try {
-    if (existsSync(CACHE_DIR) && readdirSync(CACHE_DIR).length === 0) rmSync(CACHE_DIR, { recursive: true, force: true });
-  } catch {
-    // Cleanup is best effort.
-  }
+  build?.cleanup();
 });
 
 function appDir(): string {
-  const folders = readdirSync(outDir);
-  expect(folders.length).toBeGreaterThan(0);
-  return path.join(outDir, folders[0] as string, 'resources', 'app');
+  return build.appDir;
 }
 
 /** Resolves a relative specifier the way Node's CJS loader does, or returns null. */
@@ -127,7 +63,7 @@ function resolveAsNode(specifier: string, fromFile: string): string | null {
       try {
         const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as { main?: string };
         if (manifest.main) {
-          const resolved = resolveAsNode(`./${manifest.main.replace(/^\.\\//u, '')}`, path.join(base, 'noop.js'));
+          const resolved = resolveAsNode(`./${manifest.main.replace(/^\.\//u, '')}`, path.join(base, 'noop.js'));
           if (resolved) return resolved;
         }
       } catch {

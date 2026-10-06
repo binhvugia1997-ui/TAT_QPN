@@ -10,6 +10,8 @@ import { BrowserWindow, app, dialog, Menu } from 'electron';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { registerBridge, unregisterBridge } from './bridge';
+import { describeLoadFailure, openDiagnosticLog, startupErrorUrl } from './diagnostics';
+import type { DiagnosticLog, StartupFailure } from './diagnostics';
 import { resolvePortableLayout, realProbe } from './paths';
 import type { PortableLayout } from './paths';
 import { readSettings, writeSettings } from './settings';
@@ -25,6 +27,16 @@ let settings: DesktopSettings | undefined;
 let server: OwnedServer | undefined;
 let mainWindow: Electron.BrowserWindow | undefined;
 let shuttingDown = false;
+let diagnostics: DiagnosticLog | undefined;
+/** Port the owned server actually bound to, reported in every failure page. */
+let activePort: number | null = null;
+
+const UI_MOUNT_TIMEOUT_MS = 10_000;
+const UI_MOUNT_POLL_MS = 250;
+
+function log(stage: Parameters<NonNullable<typeof diagnostics>['write']>[0], message: string): void {
+  diagnostics?.write(stage, message);
+}
 
 function resolveLayout(): PortableLayout {
   const executableDir = path.dirname(app.getPath('exe'));
@@ -63,6 +75,7 @@ function serverEnv(): Record<string, string> {
 
 async function startServer(): Promise<OwnedServer> {
   if (!layout || !settings) throw new Error('The desktop has not finished initialising.');
+  log('server-spawn', `starting ${layout.serverEntry} on requested port ${settings.port}`);
   const started = await startOwnedServer(
     {
       nodeExecutable: process.execPath,
@@ -75,10 +88,17 @@ async function startServer(): Promise<OwnedServer> {
     realDeps,
   );
 
+  activePort = started.port;
+  log('server-ready', `ready on ${started.baseUrl} (pid ${started.pid ?? 'unknown'}, lan=${started.lanEnabled})`);
+  if (started.port !== settings.port) {
+    log('server-ready', `note: requested port ${settings.port} was unavailable, using ${started.port}`);
+  }
+
   // Surface an unexpected child exit instead of leaving a dead window behind.
   void started.exited.then(({ code, signal }) => {
     if (shuttingDown || !server || server !== started) return;
     server = undefined;
+    log('server-exited', `the local server exited (code ${code ?? 'null'}${signal ? `, ${signal}` : ''})`);
     if (mainWindow && !mainWindow.isDestroyed()) {
       void dialog.showMessageBox(mainWindow, {
         type: 'error',
@@ -103,6 +123,33 @@ async function restartServer(): Promise<{ baseUrl: string; port: number }> {
     await mainWindow.loadURL(started.baseUrl);
   }
   return { baseUrl: started.baseUrl, port: started.port };
+}
+
+/**
+ * Never leave the owner with a featureless white window: put the reason, the port and the
+ * failing URL in the window itself, and record the same facts in the diagnostic log.
+ */
+function showStartupFailure(failure: StartupFailure): void {
+  log('load-failed', `${failure.reason}${failure.detail ? ` — ${failure.detail}` : ''}`);
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    void mainWindow.loadURL(startupErrorUrl(failure)).catch(() => undefined);
+  }
+  const options: Electron.MessageBoxOptions = {
+    type: 'error',
+    title: 'TNP Defect Management did not start',
+    message: failure.reason,
+    detail: [
+      failure.detail ?? '',
+      failure.url ? `URL: ${failure.url}` : '',
+      failure.port !== undefined && failure.port !== null ? `Port: ${failure.port}` : '',
+      layout ? `Diagnostic log: ${layout.diagnosticLogFile}` : '',
+    ].filter(Boolean).join('\n'),
+    buttons: ['Close'],
+  };
+  const prompt = mainWindow && !mainWindow.isDestroyed()
+    ? dialog.showMessageBox(mainWindow, options)
+    : dialog.showMessageBox(options);
+  void prompt.catch(() => undefined);
 }
 
 function createWindow(baseUrl: string): void {
@@ -132,7 +179,91 @@ function createWindow(baseUrl: string): void {
   });
   mainWindow.webContents.on('did-attach-webview', (event) => event.preventDefault());
 
-  void mainWindow.loadURL(baseUrl);
+  const contents = mainWindow.webContents;
+
+  contents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+    if (!isMainFrame || errorCode === -3) return; // -3 is a benign abort during redirects.
+    showStartupFailure({
+      reason: 'The interface failed to load.',
+      detail: describeLoadFailure(errorCode, errorDescription),
+      port: activePort,
+      url: validatedURL || baseUrl,
+      logFile: layout?.diagnosticLogFile,
+      dataDir: layout?.dataDir,
+    });
+  });
+
+  contents.on('render-process-gone', (_event, details) => {
+    log('renderer-gone', `renderer process gone: ${details.reason}`);
+    showStartupFailure({
+      reason: 'The interface stopped responding.',
+      detail: `The renderer process ended unexpectedly (${details.reason}).`,
+      port: activePort,
+      url: baseUrl,
+      logFile: layout?.diagnosticLogFile,
+      dataDir: layout?.dataDir,
+    });
+  });
+
+  // TEST build only: capture renderer console output so UAT can report without DevTools.
+  contents.on('console-message', (_event, level, message, line, sourceId) => {
+    if (level >= 2) log('renderer-console', `${level >= 3 ? 'error' : 'warning'} ${message} (${sourceId}:${line})`);
+  });
+
+  contents.on('did-finish-load', () => {
+    log('load-finished', `loaded ${contents.getURL()}`);
+    void verifyUiMounted(baseUrl);
+  });
+
+  log('window-created', `window created; loading ${baseUrl}`);
+  void contents.loadURL(baseUrl).catch((error: unknown) => {
+    showStartupFailure({
+      reason: 'The interface failed to load.',
+      detail: error instanceof Error ? error.message : String(error),
+      port: activePort,
+      url: baseUrl,
+      logFile: layout?.diagnosticLogFile,
+      dataDir: layout?.dataDir,
+    });
+  });
+}
+
+/**
+ * A page can load successfully and still render nothing — that is exactly the blank-window
+ * failure this build has already had once. Confirm React actually mounted, and say so if not.
+ */
+async function verifyUiMounted(baseUrl: string): Promise<void> {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  const contents = mainWindow.webContents;
+  const deadline = Date.now() + UI_MOUNT_TIMEOUT_MS;
+  const probe = "(() => { const r = document.getElementById('root'); return r ? r.childElementCount : -1; })()";
+
+  while (Date.now() < deadline) {
+    if (mainWindow.isDestroyed() || shuttingDown) return;
+    try {
+      const children = (await contents.executeJavaScript(probe, true)) as number;
+      if (typeof children === 'number' && children > 0) {
+        log('ui-mounted', `React mounted (${children} top-level nodes)`);
+        return;
+      }
+    } catch (error) {
+      log('ui-blank', `could not inspect the page: ${error instanceof Error ? error.message : String(error)}`);
+      return;
+    }
+    await new Promise((resolve) => { setTimeout(resolve, UI_MOUNT_POLL_MS); });
+  }
+
+  showStartupFailure({
+    reason: 'The interface loaded but did not render.',
+    detail:
+      'The page was served, but the application never mounted into #root. This usually means a '
+      + 'bundled script or stylesheet was not served correctly. Check the diagnostic log for '
+      + 'renderer console errors.',
+    port: activePort,
+    url: contents.getURL() || baseUrl,
+    logFile: layout?.diagnosticLogFile,
+    dataDir: layout?.dataDir,
+  });
 }
 
 async function reportStartupFailure(error: unknown): Promise<void> {
@@ -182,12 +313,16 @@ async function boot(): Promise<void> {
 
   layout = resolveLayout();
   settings = readSettings(layout.settingsFile);
+  diagnostics = openDiagnosticLog(layout.diagnosticLogFile);
+  log('layout', `portable=${layout.portable}; root=${layout.root}; static=${layout.staticDir}; server=${layout.serverEntry}`);
   appendLog(`desktop start; portable=${layout.portable}; root=${layout.root}`);
 
   try {
     server = await startServer();
   } catch (error) {
-    appendLog(`server start failed: ${error instanceof Error ? error.message : String(error)}`);
+    const message = error instanceof Error ? error.message : String(error);
+    log('server-exited', `server start failed: ${message}`);
+    appendLog(`server start failed: ${message}`);
     await reportStartupFailure(error);
     app.quit();
     return;
@@ -229,6 +364,7 @@ let quitConfirmed = false;
 app.on('before-quit', (event) => {
   shuttingDown = true;
   unregisterBridge();
+  diagnostics?.close();
   const owned = server;
   server = undefined;
   if (!owned) return;

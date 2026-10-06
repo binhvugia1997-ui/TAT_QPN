@@ -60,6 +60,8 @@ export interface PortableLayout {
   serverEntry: string;
   staticDir: string;
   logFile: string;
+  /** Startup trace for the desktop wrapper itself, written for Windows UAT. */
+  diagnosticLogFile: string;
   /** False when the portable root was rejected and the per-user fallback was used. */
   portable: boolean;
   /** Human-readable reason, surfaced in the desktop status panel. */
@@ -112,6 +114,7 @@ export function resolvePortableLayout(input: PortableLayoutInput): PortableLayou
     serverEntry: resolveServerEntry(input.appDir, env),
     staticDir: resolveStaticDir(input.appDir, env),
     logFile: path.join(dataDir, 'server.log'),
+    diagnosticLogFile: path.join(dataDir, 'desktop-diagnostic.log'),
     portable,
     rootNote,
   };
