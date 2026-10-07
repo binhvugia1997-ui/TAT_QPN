@@ -64,6 +64,11 @@ export interface ReportSummary {
   updatedAt: string;
 }
 
+/** One row of the bulk report index: which canonical record has a managed report attached. */
+export interface ReportIndexEntry extends ReportSummary {
+  recordIdKey: string;
+}
+
 /** Fields that are managed by the server and must never be sent back as an edit. */
 const SERVER_OWNED_FIELDS = new Set(['id', 'recordSource', 'version']);
 
@@ -167,6 +172,9 @@ export const serverApi = {
       `${recordPath(id)}/report-info`,
     ),
   reportUrl: (id: RecordId) => `${recordPath(id)}/report`,
+  /** Every attached report at once, so a table can render a link per row with one request. */
+  reportIndex: () => apiClient.get<{ reports: ReportIndexEntry[] }>('/api/report-index')
+    .then((payload) => payload.reports),
   attachReport: (id: RecordId, file: File) =>
     apiClient.upload<{ report: ReportSummary }>(`${recordPath(id)}/report`, file.name, file),
   unlinkReport: (id: RecordId) => apiClient.delete<{ unlinked: boolean; retainedFileName: string }>(`${recordPath(id)}/report`),

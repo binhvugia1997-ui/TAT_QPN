@@ -61,6 +61,16 @@ export class ReportCatalog {
     return row ? hydrate(row) : undefined;
   }
 
+  /**
+   * Every attached report link, ordered by canonical record id key. This backs the
+   * bulk report index so a list screen can show a link per row with a single query.
+   */
+  listAll(): ReportLink[] {
+    return this.database
+      .all<ReportLinkRow>('SELECT * FROM reports ORDER BY record_id_key')
+      .map((row) => hydrate(row));
+  }
+
   /** Removes the association only. Stored bytes are intentionally left in place. */
   unlink(recordIdKey: string): ReportLink | undefined {
     const existing = this.get(recordIdKey);

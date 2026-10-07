@@ -166,6 +166,49 @@ describe('managed report storage', () => {
     expect(response.status).toBe(404);
     expect(readdirSync(environment.paths.reportsDir)).toHaveLength(0);
   });
+
+  it('indexes attached reports in bulk for the Records QPN column', async () => {
+    environment = await startTestServer();
+
+    const empty = await api<{ reports: unknown[] }>(environment.baseUrl, 'GET', '/api/report-index');
+    expect(empty.status).toBe(200);
+    expect(empty.body.reports).toEqual([]);
+
+    await attachReport(environment, 'number:50', 'Countermeasure.pdf', 'REPORT-A');
+    await attachReport(environment, 'number:51', 'Evidence.xlsx', 'REPORT-B');
+
+    const indexed = await api<{ reports: { recordIdKey: string; originalName: string; sizeBytes: number }[] }>(
+      environment.baseUrl,
+      'GET',
+      '/api/report-index',
+    );
+
+    expect(indexed.status).toBe(200);
+    expect(indexed.body.reports.map(({ recordIdKey, originalName, sizeBytes }) => ({ recordIdKey, originalName, sizeBytes })))
+      .toEqual([
+        { recordIdKey: 'number:50', originalName: 'Countermeasure.pdf', sizeBytes: 8 },
+        { recordIdKey: 'number:51', originalName: 'Evidence.xlsx', sizeBytes: 8 },
+      ]);
+    // Server-side stored names and absolute paths never leave through the index either.
+    expect(JSON.stringify(indexed.body)).not.toContain(environment.paths.reportsDir);
+    // Stored names look like "<record id key>--<random hex>--<original>"; the random part must not leak.
+    expect(JSON.stringify(indexed.body)).not.toMatch(/--[0-9a-f]{12}--/iu);
+    expect(JSON.stringify(indexed.body)).not.toContain('storedName');
+
+    // Unlinking removes the row from the index but keeps the stored bytes.
+    expect((await api(environment.baseUrl, 'DELETE', '/api/records/number%3A50/report')).status).toBe(200);
+    const afterUnlink = await api<{ reports: { recordIdKey: string }[] }>(
+      environment.baseUrl,
+      'GET',
+      '/api/report-index',
+    );
+    expect(afterUnlink.body.reports.map(({ recordIdKey }) => recordIdKey)).toEqual(['number:51']);
+  });
+
+  it('only answers the report index for GET', async () => {
+    environment = await startTestServer();
+    expect((await api(environment.baseUrl, 'POST', '/api/report-index', {})).status).toBe(404);
+  });
 });
 
 describe('report path security', () => {

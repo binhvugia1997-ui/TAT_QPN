@@ -182,21 +182,32 @@ button:disabled { cursor: not-allowed; opacity: .62; }
 .active-filter-row button { min-height: 22px; margin-left: auto; padding: 2px 4px; }
 .records-table-panel { min-width: 0; overflow: hidden; background: #fff; border: 1px solid var(--line); border-radius: 9px; }
 .table-scroll { width: 100%; overflow: auto; }
-.records-table { width: 100%; min-width: 1140px; border-collapse: separate; border-spacing: 0; table-layout: fixed; }
+/* The approved 14-column Records layout is wider than the panel, so `.table-scroll` keeps
+   the horizontal scrollbar and every required column stays reachable instead of the table
+   collapsing back into the old compact subset. */
+.records-table { width: 100%; min-width: 1750px; border-collapse: separate; border-spacing: 0; table-layout: fixed; }
+.records-table.has-ca-link { min-width: 1852px; }
 .records-table th { position: sticky; top: 0; z-index: 1; padding: 10px 9px; color: #778278; background: #f8f9f6; border-bottom: 1px solid #e6e9e2; font-size: 9px; font-weight: 750; letter-spacing: .045em; text-align: left; text-transform: uppercase; white-space: nowrap; }
 .table-sort-button { display: inline-flex; align-items: center; gap: 5px; padding: 0; color: inherit; background: transparent; border: 0; font: inherit; letter-spacing: inherit; text-align: left; text-transform: inherit; white-space: nowrap; cursor: pointer; }
 .table-sort-button:hover { color: #34473a; }
 .table-sort-button:focus-visible { outline: 2px solid var(--orange); outline-offset: 3px; }
 .table-sort-indicator { color: var(--orange); font-size: 10px; }
-.records-table th:nth-child(1) { width: 135px; }
-.records-table th:nth-child(2) { width: 130px; }
-.records-table th:nth-child(3) { width: 93px; }
-.records-table th:nth-child(4) { width: 80px; }
-.records-table th:nth-child(5) { width: 95px; }
-.records-table th:nth-child(6) { width: 240px; }
-.records-table th:nth-child(7) { width: 120px; }
-.records-table th:nth-child(8) { width: 105px; }
-.records-table th:nth-child(9) { width: 135px; }
+/* Column widths follow the approved Records column order exactly. */
+.records-table th:nth-child(1) { width: 52px; }   /* NO */
+.records-table th:nth-child(2) { width: 130px; }  /* MQIS */
+.records-table th:nth-child(3) { width: 108px; }  /* Registered Date */
+.records-table th:nth-child(4) { width: 100px; }  /* PIC */
+.records-table th:nth-child(5) { width: 130px; }  /* Approval */
+.records-table th:nth-child(6) { width: 78px; }   /* PLANT */
+.records-table th:nth-child(7) { width: 200px; }  /* Title */
+.records-table th:nth-child(8) { width: 160px; }  /* Occur place */
+.records-table th:nth-child(9) { width: 170px; }  /* Công đoạn quy trách */
+.records-table th:nth-child(10) { width: 220px; } /* Tên lỗi */
+.records-table th:nth-child(11) { width: 100px; } /* Tình trạng */
+.records-table th:nth-child(12) { width: 74px; }  /* QPN */
+.records-table th:nth-child(13) { width: 128px; } /* TAT Hệ thống */
+.records-table th:nth-child(14) { width: 100px; } /* Ngày Pending */
+.records-table th:nth-child(15) { width: 102px; } /* CA file (corrective workspace only) */
 .records-table td { height: 45px; overflow: hidden; padding: 7px 9px; color: #465249; border-bottom: 1px solid #eff1ec; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 .records-table tbody tr:last-child td { border-bottom: 0; }
 .record-row { cursor: pointer; transition: background .1s ease; }
@@ -213,6 +224,15 @@ button:disabled { cursor: not-allowed; opacity: .62; }
 .model-cell { color: #647065 !important; }
 .pic-cell { color: #425c49 !important; font-weight: 650; }
 .unassigned-value { color: #a5ada4; font-weight: 400; }
+.row-sequence-cell { color: #98a298; font-variant-numeric: tabular-nums; text-align: right; }
+.mqis-cell { color: #24362a; font-weight: 650; }
+.title-cell, .occur-place-cell, .part-group-cell, .defect-name-cell { color: #3d4a40; }
+.condition-cell { color: #a5ada4; }
+.pending-cell { color: #465249; font-variant-numeric: tabular-nums; font-weight: 650; }
+.qpn-cell { text-align: center; }
+.qpn-file-link { display: inline-flex; padding: 3px 8px; border-radius: 99px; color: #2f5f8a; background: #eaf1f8; font-size: 9px; font-weight: 750; text-decoration: none; white-space: nowrap; }
+.qpn-file-link:hover { color: #1d4468; background: #dce8f4; text-decoration: underline; }
+.qpn-file-link:focus-visible { outline: 2px solid var(--orange); outline-offset: 2px; }
 .tat-pill, .status-pill { display: inline-flex; align-items: center; max-width: 100%; overflow: hidden; padding: 4px 7px; border-radius: 99px; font-size: 9px; font-weight: 750; text-overflow: ellipsis; white-space: nowrap; }
 .tat-overdue { color: #a42e3d; background: #fbe9eb; }
 .tat-today { color: #994012; background: #fff0e7; }

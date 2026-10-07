@@ -1,5 +1,5 @@
 import type { DefectRecord } from '../../models/defect-record';
-import { addCalendarDays, daysUntil, normalizeDateOnly, type DateOnly } from '../../utils/date';
+import { addCalendarDays, daysUntil, differenceInCalendarDays, normalizeDateOnly, type DateOnly } from '../../utils/date';
 import { isCompletedStatus } from '../status/status';
 
 export const LEGACY_TAT_WINDOW_DAYS = 7;
@@ -29,6 +29,27 @@ export function getTatDaysRemaining(
 ): number | null {
   const dueDate = getTatDueDate(record);
   return dueDate ? daysUntil(dueDate, today) : null;
+}
+
+/**
+ * "Ngày Pending" — the legacy 7-day pending window counted from registration.
+ *
+ * This is intentionally independent of `getTatDueDate`: it reads only `registeredDate`
+ * and never touches the TNP `dueDate`, so the TAT deadline and the pending window can
+ * disagree. It is derived on every render and is never persisted to SQLite.
+ *
+ * `registeredDate = 2026-10-01`, `today = 2026-10-11` → 7 - 10 = -3, whatever the dueDate is.
+ */
+export function getPendingDays(
+  record: Pick<DefectRecord, 'registeredDate'>,
+  today: DateOnly,
+): number | null {
+  try {
+    return LEGACY_TAT_WINDOW_DAYS - differenceInCalendarDays(today, String(record.registeredDate ?? ''));
+  } catch {
+    // A blank or unparsable registration date has no pending window; render "—" instead.
+    return null;
+  }
 }
 
 export function getTatTier(

@@ -3,6 +3,7 @@ import type { DefectRecord } from '../../models/defect-record';
 import {
   getTatDueDate,
   getTatDaysRemaining,
+  getPendingDays,
   getTatTier,
   isActionDueSoon,
   isActionOverdue,
@@ -109,6 +110,46 @@ describe('effective TAT deadline', () => {
 
     expect(sortTatByPriority([onTrack, noDeadline, dueToday, overdue, completed], today).map((item) => item.mgmtNo))
       .toEqual(['OVERDUE', 'DUE-TODAY', 'ON-TRACK', 'NO-DEADLINE']);
+  });
+});
+
+describe('pending-day window (Ngày Pending)', () => {
+  it('counts 7 calendar days from registeredDate and goes negative past the window', () => {
+    // today is 2026-10-12 in this suite.
+    expect(getPendingDays(record({ registeredDate: '2026-10-05' }), today)).toBe(0);
+    expect(getPendingDays(record({ registeredDate: '2026-10-12' }), today)).toBe(7);
+    expect(getPendingDays(record({ registeredDate: '2026-10-13' }), today)).toBe(8);
+    expect(getPendingDays(record({ registeredDate: '2026-10-01' }), today)).toBe(-4);
+  });
+
+  it('stays independent of the TAT deadline: the agreed example keeps both values apart', () => {
+    // registeredDate = 2026-10-01, today = 2026-10-11, dueDate = 2026-10-15
+    const example = record({ registeredDate: '2026-10-01', dueDate: '2026-10-15' });
+
+    expect(getTatDueDate(example)).toBe('2026-10-15');
+    expect(getPendingDays(example, '2026-10-11')).toBe(-3);
+  });
+
+  it('never reads dueDate, so the pending window is unchanged when only the deadline moves', () => {
+    const base = record({ registeredDate: '2026-10-08' });
+    // Typed as full records so the narrow `Pick<registeredDate>` parameter keeps proving
+    // at compile time that the pending window cannot reach the TNP deadline.
+    const withoutDeadline: DefectRecord = { ...base, dueDate: null };
+    const farDeadline: DefectRecord = { ...base, dueDate: '2027-06-30' };
+
+    expect(getPendingDays(base, today)).toBe(3);
+    expect(getPendingDays(withoutDeadline, today)).toBe(3);
+    expect(getPendingDays(farDeadline, today)).toBe(3);
+  });
+
+  it('counts calendar days across a month boundary without drifting', () => {
+    expect(getPendingDays(record({ registeredDate: '2026-09-28' }), today)).toBe(-7);
+  });
+
+  it('has no pending window when registeredDate is missing or unparsable', () => {
+    expect(getPendingDays(record({ registeredDate: null }), today)).toBeNull();
+    expect(getPendingDays(record({ registeredDate: undefined }), today)).toBeNull();
+    expect(getPendingDays({ ...record(), registeredDate: 'not-a-date' as never }, today)).toBeNull();
   });
 });
 

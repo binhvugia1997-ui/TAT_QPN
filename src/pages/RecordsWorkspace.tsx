@@ -1,24 +1,32 @@
 import { Fragment, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { applyRecordFilters, createEmptyFilters, parseRecordFilters, sortRecordsByValue, toggleColumnSort, writeRecordFilters, type ColumnSortState, type RecordFilters } from '../business/filters/filters';
-import { getTatDaysRemaining, getTatDueDate, sortRecordsByOperationalPriority } from '../business/tat/tat';
+import { getTatDaysRemaining, sortRecordsByOperationalPriority } from '../business/tat/tat';
 import { matchesTatMonitoringFilter, type TatMonitoringFilter } from '../business/tat/dashboard';
 import { getCorrectiveActionRecords, summarizeCorrectiveActions, type CorrectiveActionScope } from '../business/corrective/corrective';
 import { getRejectedRecords } from '../business/rejected/rejected';
-import { isCompletedStatus, isRejectedStatus } from '../business/status/status';
-import { isDateOnly, todayDateOnly } from '../utils/date';
+import { isCompletedStatus } from '../business/status/status';
+import {
+  createReportIndex,
+  getRecordCellSource,
+  getVisibleRecordsColumns,
+  type RecordsTableSortableColumn,
+  type ReportIndex,
+} from '../business/records/recordsTable';
+import { todayDateOnly } from '../utils/date';
 import type { DefectRecord, RecordId } from '../models/defect-record';
 import type { Locale, MessageKey } from '../i18n';
 import { translate } from '../i18n';
+import { serverApi } from '../services/server/serverRecordRepository';
 import RecordDetailDrawer from '../components/RecordDetailDrawer';
+import RecordsTableRow from '../components/RecordsTableRow';
 import TnpImportDialog from '../components/TnpImportDialog';
 import RecordFiltersPanel from '../components/RecordFiltersPanel';
 
 export type RecordsWorkspaceMode = 'records' | 'corrective' | 'rejected';
 type WorkView = 'active' | 'all' | 'completed';
 type TatFilter = TatMonitoringFilter;
-type SortableColumn = 'tat' | 'mgmtNo' | 'registeredDate' | 'plant' | 'status' | 'deadline';
-type TableColumnKey = SortableColumn | 'model' | 'defect' | 'pic' | 'caLink';
+type SortableColumn = RecordsTableSortableColumn;
 type ManualSort = ColumnSortState<SortableColumn>;
 
 interface RecordsWorkspaceProps {
@@ -40,26 +48,6 @@ const TAT_FILTERS: Array<{ value: TatFilter; label: MessageKey }> = [
   { value: 'no-deadline', label: 'tatNoDeadline' },
 ];
 
-const TABLE_COLUMNS: Array<{ key: TableColumnKey; label: MessageKey; sortable?: SortableColumn; correctiveOnly?: boolean }> = [
-  { key: 'tat', label: 'tatColumn', sortable: 'tat' },
-  { key: 'mgmtNo', label: 'managementNumber', sortable: 'mgmtNo' },
-  { key: 'registeredDate', label: 'dateColumn', sortable: 'registeredDate' },
-  { key: 'plant', label: 'plantColumn', sortable: 'plant' },
-  { key: 'model', label: 'modelColumn' },
-  { key: 'defect', label: 'defectColumn' },
-  { key: 'status', label: 'statusColumn', sortable: 'status' },
-  { key: 'pic', label: 'picColumn' },
-  { key: 'caLink', label: 'caLinkColumn', correctiveOnly: true },
-  { key: 'deadline', label: 'deadlineColumn', sortable: 'deadline' },
-];
-
-function displayDate(value: string | null | undefined, locale: Locale): string {
-  if (!value || !isDateOnly(value)) return '—';
-  const languageTag = locale === 'vi' ? 'vi-VN' : locale === 'ko' ? 'ko-KR' : 'en-GB';
-  return new Intl.DateTimeFormat(languageTag, { day: '2-digit', month: 'short', year: 'numeric' })
-    .format(new Date(`${value}T00:00:00`));
-}
-
 function pageTitle(mode: RecordsWorkspaceMode): MessageKey {
   if (mode === 'corrective') return 'corrective';
   if (mode === 'rejected') return 'rejected';
@@ -72,36 +60,9 @@ function pageDescription(mode: RecordsWorkspaceMode): MessageKey {
   return 'recordsDescription';
 }
 
+/** Sorting reads the same raw source value the cell renders, so order always matches display. */
 function sortValue(record: DefectRecord, column: SortableColumn, today: string): unknown {
-  switch (column) {
-    case 'tat': return getTatDaysRemaining(record, today);
-    case 'mgmtNo': return record.mgmtNo;
-    case 'registeredDate': return record.registeredDate;
-    case 'plant': return record.plant;
-    case 'status': return record.status;
-    case 'deadline': return getTatDueDate(record);
-  }
-}
-
-function tatLabel(record: DefectRecord, today: string, locale: Locale): { label: string; tone: string; fallback: boolean } {
-  if (isCompletedStatus(record.status)) {
-    return { label: translate(locale, 'completed'), tone: 'tat-completed', fallback: false };
-  }
-  const deadline = getTatDueDate(record);
-  const remaining = getTatDaysRemaining(record, today);
-  const fallback = Boolean(deadline && (!record.dueDate || !isDateOnly(record.dueDate)));
-  if (remaining === null) return { label: translate(locale, 'noDeadlineValue'), tone: 'tat-undated', fallback: false };
-  if (remaining < 0) return { label: translate(locale, 'tatDaysShort', { days: remaining }), tone: 'tat-overdue', fallback };
-  if (remaining === 0) return { label: translate(locale, 'tatTodayShort'), tone: 'tat-today', fallback };
-  if (remaining <= 3) return { label: translate(locale, 'tatDaysShort', { days: remaining }), tone: 'tat-soon', fallback };
-  return { label: translate(locale, 'tatDaysShort', { days: remaining }), tone: 'tat-on-track', fallback };
-}
-
-function statusTone(status: string): string {
-  if (isRejectedStatus(status)) return 'status-rejected';
-  if (isCompletedStatus(status)) return 'status-completed';
-  if (status === 'Đợi đối sách') return 'status-active';
-  return 'status-unknown';
+  return getRecordCellSource(record, column, today);
 }
 
 export default function RecordsWorkspace({ locale, records, mode, onRecordsChanged }: RecordsWorkspaceProps) {
@@ -114,6 +75,28 @@ export default function RecordsWorkspace({ locale, records, mode, onRecordsChang
   const [correctiveScope, setCorrectiveScope] = useState<CorrectiveActionScope>('all');
   const [selectedId, setSelectedId] = useState<RecordId | null>(null);
   const [importOpen, setImportOpen] = useState(false);
+  const [reportIndex, setReportIndex] = useState<ReportIndex>(() => new Map());
+
+  /**
+   * The QPN column links straight to a record's managed report, so the bulk index is
+   * refetched whenever the record set changes: importing, editing, or attaching/unlinking
+   * in the detail drawer all refresh `records`. A failed lookup only clears the links —
+   * it must never hide the records themselves.
+   */
+  useEffect(() => {
+    let active = true;
+    serverApi.reportIndex().then(
+      (entries) => {
+        if (active) setReportIndex(createReportIndex(entries));
+      },
+      () => {
+        if (active) setReportIndex(new Map());
+      },
+    );
+    return () => {
+      active = false;
+    };
+  }, [records]);
 
   useEffect(() => {
     const nextFilters = parseRecordFilters(searchParams);
@@ -217,7 +200,7 @@ export default function RecordsWorkspace({ locale, records, mode, onRecordsChang
   const extraFilterTags = tatFilter !== 'all'
     ? [`${translate(locale, 'tatFilter')}: ${translate(locale, TAT_FILTERS.find(({ value }) => value === tatFilter)!.label)}`]
     : [];
-  const tableColumns = TABLE_COLUMNS.filter(({ correctiveOnly }) => !correctiveOnly || mode === 'corrective');
+  const tableColumns = getVisibleRecordsColumns({ corrective: mode === 'corrective' });
 
   return (
     <div className="page records-page">
@@ -291,7 +274,7 @@ export default function RecordsWorkspace({ locale, records, mode, onRecordsChang
             <i aria-hidden="true" />
             {manualSort
               ? translate(locale, 'sortedBy', {
-                column: translate(locale, TABLE_COLUMNS.find(({ sortable }) => sortable === manualSort.column)!.label),
+                column: translate(locale, tableColumns.find(({ sortable }) => sortable === manualSort.column)!.label),
                 direction: translate(locale, manualSort.direction === 'asc' ? 'sortAscending' : 'sortDescending'),
               })
               : locale === 'vi' ? 'Ưu tiên theo deadline hiệu lực' : locale === 'ko' ? '유효 기한 우선 정렬' : 'Prioritized by effective deadline'}
@@ -331,7 +314,7 @@ export default function RecordsWorkspace({ locale, records, mode, onRecordsChang
           </div>
         ) : (
           <div className="table-scroll">
-            <table className="records-table">
+            <table className={mode === 'corrective' ? 'records-table has-ca-link' : 'records-table'}>
               <thead><tr>
                 {tableColumns.map(({ key, label, sortable }) => {
                   if (!sortable) return <th key={key}>{translate(locale, label)}</th>;
@@ -356,53 +339,22 @@ export default function RecordsWorkspace({ locale, records, mode, onRecordsChang
                 })}
               </tr></thead>
               <tbody>
-                {visibleRecords.map((record, index) => {
-                  const insertCompletedDivider = view === 'all' && completedStart === index && completedRecords.length > 0;
-                  const tat = tatLabel(record, today, locale);
-                  const effectiveDeadline = getTatDueDate(record);
-                  const hasCaLink = Boolean(record.caFileLink?.trim());
-                  return (
-                    <Fragment key={`${typeof record.id}:${String(record.id)}`}>
-                      {insertCompletedDivider && (
-                        <tr className="completed-divider-row"><td colSpan={tableColumns.length}>{translate(locale, 'completedView')} · {completedRecords.length}</td></tr>
-                      )}
-                      <tr
-                        className={`record-row${isCompletedStatus(record.status) ? ' completed-record-row' : ''}`}
-                        onClick={() => setSelectedId(record.id)}
-                      >
-                        <td><span className={`tat-pill ${tat.tone}`}>{tat.label}</span></td>
-                        <td className="management-cell">
-                          <button type="button" className="management-link-button" aria-label={`${translate(locale, 'openDetail')}: ${record.mgmtNo}`} onClick={(event) => {
-                            event.stopPropagation();
-                            setSelectedId(record.id);
-                          }}>
-                            {record.mgmtNo || `#${String(record.id)}`}
-                          </button>
-                        </td>
-                        <td className="date-cell">{displayDate(record.registeredDate, locale)}</td>
-                        <td className="plant-cell">{record.plant || '—'}</td>
-                        <td className="model-cell">{record.model || record.project || '—'}</td>
-                        <td className="defect-cell" title={record.title || record.defectDetails || ''}>
-                          <strong>{record.title || record.defectDetails || record.partName || translate(locale, 'untitled')}</strong>
-                          {record.partCode && <small>{record.partCode}</small>}
-                        </td>
-                        <td><span className={`status-pill ${statusTone(record.status)}`}>{record.status || '—'}</span></td>
-                        <td className="pic-cell">{record.pic || <span className="unassigned-value">—</span>}</td>
-                        {mode === 'corrective' && (
-                          <td className="ca-link-cell" title={hasCaLink ? record.caFileLink ?? undefined : undefined}>
-                            <span className={hasCaLink ? 'ca-link-state attached' : 'ca-link-state missing'}>
-                              {translate(locale, hasCaLink ? 'caLinked' : 'missingCaLink')}
-                            </span>
-                          </td>
-                        )}
-                        <td className="date-cell deadline-cell">
-                          {displayDate(effectiveDeadline, locale)}
-                          {effectiveDeadline && <small>{translate(locale, tat.fallback ? 'fallbackDeadline' : 'sourceDeadline')}</small>}
-                        </td>
-                      </tr>
-                    </Fragment>
-                  );
-                })}
+                {visibleRecords.map((record, index) => (
+                  <Fragment key={`${typeof record.id}:${String(record.id)}`}>
+                    {view === 'all' && completedStart === index && completedRecords.length > 0 && (
+                      <tr className="completed-divider-row"><td colSpan={tableColumns.length}>{translate(locale, 'completedView')} · {completedRecords.length}</td></tr>
+                    )}
+                    <RecordsTableRow
+                      locale={locale}
+                      record={record}
+                      sequence={index + 1}
+                      today={today}
+                      reportIndex={reportIndex}
+                      showCaLink={mode === 'corrective'}
+                      onSelect={(selected) => setSelectedId(selected.id)}
+                    />
+                  </Fragment>
+                ))}
                 {view === 'all' && completedStart === visibleRecords.length && completedRecords.length > 0 && (
                   <tr className="completed-divider-row"><td colSpan={tableColumns.length}>{translate(locale, 'completedView')} · {completedRecords.length}</td></tr>
                 )}
