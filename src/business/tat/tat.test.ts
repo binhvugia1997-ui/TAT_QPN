@@ -146,6 +146,46 @@ describe('pending-day window (Ngày Pending)', () => {
     expect(getPendingDays(record({ registeredDate: '2026-09-28' }), today)).toBe(-7);
   });
 
+  it('is blank while the defect is no longer in the active response stage', () => {
+    // "Đợi duyệt" and "Đợi xét" — and the rest of the canonical completed set — are not
+    // active pending stages, so no pending value is calculated or displayed.
+    for (const status of ['Đợi duyệt', 'Đợi xét', 'Hoàn thành']) {
+      expect(getPendingDays(record({ status, registeredDate: '2026-10-01' }), today)).toBeNull();
+    }
+  });
+
+  it('keeps calculating for the active pending status and for Reject', () => {
+    expect(getPendingDays(record({ status: 'Đợi đối sách', registeredDate: '2026-10-05' }), today)).toBe(0);
+    expect(getPendingDays(record({ status: 'Rejected (xét)', registeredDate: '2026-10-05' }), today)).toBe(0);
+  });
+
+  it('disappears immediately when the status moves to a completed one, and comes back', () => {
+    const active = record({ registeredDate: '2026-10-05' });
+
+    expect(getPendingDays(active, today)).toBe(0);
+    expect(getPendingDays({ ...active, status: 'Đợi duyệt' }, today)).toBeNull();
+    expect(getPendingDays({ ...active, status: 'Đợi xét' }, today)).toBeNull();
+    // Back to an applicable active status: recalculated from the same registeredDate.
+    expect(getPendingDays({ ...active, status: 'Đợi đối sách' }, today)).toBe(0);
+  });
+
+  it('never reads dueDate, whatever the status', () => {
+    const base: DefectRecord = { ...record({ registeredDate: '2026-10-05' }), dueDate: null };
+    const farDeadline: DefectRecord = { ...record({ registeredDate: '2026-10-05' }), dueDate: '2027-06-30' };
+
+    expect(getPendingDays(base, today)).toBe(0);
+    expect(getPendingDays(farDeadline, today)).toBe(0);
+  });
+
+  it('leaves the TAT effective deadline untouched by the pending status rule', () => {
+    // today is 2026-10-12 in this suite; dueDate 2026-10-15 is 3 days away whatever the status.
+    for (const status of ['Đợi đối sách', 'Đợi duyệt', 'Đợi xét', 'Hoàn thành']) {
+      const item = record({ status, registeredDate: '2026-10-01', dueDate: '2026-10-15' });
+      expect(getTatDueDate(item)).toBe('2026-10-15');
+      expect(getTatDaysRemaining(item, today)).toBe(3);
+    }
+  });
+
   it('has no pending window when registeredDate is missing or unparsable', () => {
     expect(getPendingDays(record({ registeredDate: null }), today)).toBeNull();
     expect(getPendingDays(record({ registeredDate: undefined }), today)).toBeNull();

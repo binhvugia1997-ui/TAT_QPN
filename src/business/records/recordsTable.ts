@@ -41,6 +41,11 @@ export type RecordsTableSortableColumn = Exclude<RecordsTableColumnKey, 'no' | '
 export interface RecordsTableColumn {
   key: RecordsTableColumnKey;
   label: MessageKey;
+  /**
+   * Rendered width in px. Drives the generated `<colgroup>`, so widths always line up
+   * with whichever columns are currently visible instead of relying on column position.
+   */
+  width: number;
   sortable?: RecordsTableSortableColumn;
   /** Appended after the fourteen approved columns, and only in the corrective workspace. */
   correctiveOnly?: boolean;
@@ -48,26 +53,26 @@ export interface RecordsTableColumn {
 
 /** The approved Records columns, in exactly this order. */
 export const REQUIRED_RECORDS_COLUMNS: readonly RecordsTableColumn[] = [
-  { key: 'no', label: 'noColumn' },
-  { key: 'mqis', label: 'mqisColumn', sortable: 'mqis' },
-  { key: 'registeredDate', label: 'registeredDateColumn', sortable: 'registeredDate' },
-  { key: 'pic', label: 'picColumn', sortable: 'pic' },
-  { key: 'approval', label: 'approvalColumn', sortable: 'approval' },
-  { key: 'plant', label: 'recordsPlantColumn', sortable: 'plant' },
-  { key: 'title', label: 'titleColumn', sortable: 'title' },
-  { key: 'occurPlace', label: 'occurPlaceColumn', sortable: 'occurPlace' },
-  { key: 'partGroup', label: 'partGroupColumn', sortable: 'partGroup' },
-  { key: 'defectName', label: 'defectNameColumn', sortable: 'defectName' },
-  { key: 'condition', label: 'conditionColumn' },
-  { key: 'qpn', label: 'qpnColumn' },
-  { key: 'tatSystem', label: 'tatSystemColumn', sortable: 'tatSystem' },
-  { key: 'pendingDays', label: 'pendingDaysColumn', sortable: 'pendingDays' },
+  { key: 'no', label: 'noColumn', width: 52 },
+  { key: 'mqis', label: 'mqisColumn', width: 130, sortable: 'mqis' },
+  { key: 'registeredDate', label: 'registeredDateColumn', width: 108, sortable: 'registeredDate' },
+  { key: 'pic', label: 'picColumn', width: 100, sortable: 'pic' },
+  { key: 'approval', label: 'approvalColumn', width: 130, sortable: 'approval' },
+  { key: 'plant', label: 'recordsPlantColumn', width: 78, sortable: 'plant' },
+  { key: 'title', label: 'titleColumn', width: 200, sortable: 'title' },
+  { key: 'occurPlace', label: 'occurPlaceColumn', width: 160, sortable: 'occurPlace' },
+  { key: 'partGroup', label: 'partGroupColumn', width: 170, sortable: 'partGroup' },
+  { key: 'defectName', label: 'defectNameColumn', width: 220, sortable: 'defectName' },
+  { key: 'condition', label: 'conditionColumn', width: 100 },
+  { key: 'qpn', label: 'qpnColumn', width: 124 },
+  { key: 'tatSystem', label: 'tatSystemColumn', width: 128, sortable: 'tatSystem' },
+  { key: 'pendingDays', label: 'pendingDaysColumn', width: 100, sortable: 'pendingDays' },
 ];
 
 /** Everything the table can render: the approved columns plus the corrective-only badge. */
 export const RECORDS_TABLE_COLUMNS: readonly RecordsTableColumn[] = [
   ...REQUIRED_RECORDS_COLUMNS,
-  { key: 'caLink', label: 'caLinkColumn', correctiveOnly: true },
+  { key: 'caLink', label: 'caLinkColumn', width: 102, correctiveOnly: true },
 ];
 
 /** Columns a given workspace mode actually renders, in order. */

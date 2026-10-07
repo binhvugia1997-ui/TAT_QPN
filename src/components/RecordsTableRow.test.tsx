@@ -1,11 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import RecordsTableRow from './RecordsTableRow';
-import { createReportIndex } from '../business/records/recordsTable';
-import { getVisibleRecordsColumns } from '../business/records/recordsTable';
+import {
+  createReportIndex,
+  REQUIRED_RECORDS_COLUMNS,
+  type RecordsTableColumnKey,
+} from '../business/records/recordsTable';
 import type { DefectRecord } from '../models/defect-record';
 
 const today = '2026-10-11';
+const ALL_COLUMNS: RecordsTableColumnKey[] = REQUIRED_RECORDS_COLUMNS.map(({ key }) => key);
 
 const record = (overrides: Partial<DefectRecord> = {}): DefectRecord => ({
   id: 7,
@@ -24,7 +28,13 @@ const record = (overrides: Partial<DefectRecord> = {}): DefectRecord => ({
   ...overrides,
 });
 
-function renderRow(overrides: Partial<DefectRecord> = {}, options: { reportIndex?: ReturnType<typeof createReportIndex>; mode?: 'records' | 'corrective' } = {}): string {
+interface RenderOptions {
+  reportIndex?: ReturnType<typeof createReportIndex>;
+  mode?: 'records' | 'corrective';
+  columns?: RecordsTableColumnKey[];
+}
+
+function renderRow(overrides: Partial<DefectRecord> = {}, options: RenderOptions = {}): string {
   return renderToStaticMarkup(
     <RecordsTableRow
       locale="en"
@@ -33,15 +43,27 @@ function renderRow(overrides: Partial<DefectRecord> = {}, options: { reportIndex
       today={today}
       reportIndex={options.reportIndex ?? createReportIndex([])}
       showCaLink={options.mode === 'corrective'}
+      columns={options.columns ?? ALL_COLUMNS}
       onSelect={() => {}}
+      onReportChanged={() => {}}
     />,
   );
 }
 
+/**
+ * Drops hidden subtrees first, so a collapsed menu does not count as visible text.
+ * Matches only a real `hidden` attribute — never `aria-hidden`, which decorates icons.
+ */
+function withoutHidden(markup: string): string {
+  return markup.replace(/<([a-z]+)([^>]*\shidden(?:\s*=|\s|>)[^>]*)>[\s\S]*?<\/\1>/gu, '');
+}
+
 function cells(markup: string): string[] {
-  return (markup.match(/<td[^>]*>[\s\S]*?<\/td>/gu) ?? [])
+  return (withoutHidden(markup).match(/<td[^>]*>[\s\S]*?<\/td>/gu) ?? [])
     .map((cell) => cell.replace(/<[^>]*>/gu, '').trim());
 }
+
+const withReport = createReportIndex([{ recordIdKey: 'number:7', originalName: 'Countermeasure.pdf' }]);
 
 describe('Records table row rendering', () => {
   it('renders exactly the 14 approved cells, in the approved order', () => {
@@ -57,15 +79,10 @@ describe('Records table row rendering', () => {
       'Welding',                    // Công đoạn quy trách
       'Scratch on left panel',      // Tên lỗi
       '—',                          // Tình trạng — no verified source field
-      '—',                          // QPN — no linked file
+      '＋ Add',                     // QPN — nothing attached yet
       '15 Oct 2026TNP deadline',    // TAT Hệ thống
       '-3',                         // Ngày Pending
     ]);
-  });
-
-  it('renders one header per approved column, in the same order', () => {
-    expect(getVisibleRecordsColumns({ corrective: false })).toHaveLength(14);
-    expect(cells(renderRow())).toHaveLength(getVisibleRecordsColumns({ corrective: false }).length);
   });
 
   it('keeps TAT Hệ thống and Ngày Pending independent', () => {
@@ -84,26 +101,28 @@ describe('Records table row rendering', () => {
   });
 
   it('always shows the placeholder for Tình trạng, even when other fields are filled in', () => {
-    const filled = cells(renderRow({ notes: 'OK', status: 'Hoàn thành', completedDate: '2026-10-09' }));
+    const filled = cells(renderRow({ notes: 'OK', completedDate: '2026-10-09' }));
 
     expect(filled[10]).toBe('—');
   });
 
-  it('renders a clickable File link in QPN only when a report is linked', () => {
-    const linked = renderRow({}, { reportIndex: createReportIndex([{ recordIdKey: 'number:7', originalName: 'Countermeasure.pdf' }]) });
+  it('renders Ngày Pending blank — not 0, not an em dash — for a no-longer-active status', () => {
+    for (const status of ['Đợi duyệt', 'Đợi xét', 'Hoàn thành']) {
+      const row = cells(renderRow({ status }));
 
-    expect(cells(linked)[11]).toBe('File');
-    expect(linked).toContain('href="/api/records/number%3A7/report"');
-    expect(linked).toContain('title="Countermeasure.pdf"');
-    expect(linked).toContain('target="_blank"');
-
-    expect(cells(renderRow())[11]).toBe('—');
+      expect(row[13]).toBe('');
+      // TAT Hệ thống is untouched by the pending rule.
+      expect(row[12]).toBe('15 Oct 2026TNP deadline');
+    }
   });
 
-  it('uses the type-preserving record id key for the QPN link', () => {
-    const linked = renderRow({ id: '7' }, { reportIndex: createReportIndex([{ recordIdKey: 'string:7', originalName: 'Other.pdf' }]) });
+  it('keeps calculating Ngày Pending for the active pending status', () => {
+    expect(cells(renderRow({ status: 'Đợi đối sách' }))[13]).toBe('-3');
+  });
 
-    expect(linked).toContain('href="/api/records/string%3A7/report"');
+  it('marks the blank pending cell so it is visibly empty', () => {
+    expect(renderRow({ status: 'Đợi duyệt' })).toContain('pending-cell pending-blank');
+    expect(renderRow()).not.toContain('pending-blank');
   });
 
   it('shows placeholders rather than empty cells for missing source values', () => {
@@ -120,7 +139,10 @@ describe('Records table row rendering', () => {
       status: '',
     }));
 
-    expect(blank).toEqual(['1', '—', '—', '—', '—', '—', '—', '—', '—', '—', '—', '—', '—', '—']);
+    expect(blank[1]).toBe('—');
+    expect(blank[3]).toBe('—');
+    expect(blank[5]).toBe('—');
+    expect(blank[13]).toBe('');
   });
 
   it('still resolves TAT Hệ thống from dueDate when registeredDate is missing, with no pending window', () => {
@@ -128,11 +150,98 @@ describe('Records table row rendering', () => {
 
     expect(withoutRegistration[2]).toBe('—');
     expect(withoutRegistration[12]).toBe('15 Oct 2026TNP deadline');
-    expect(withoutRegistration[13]).toBe('—');
+    expect(withoutRegistration[13]).toBe('');
   });
 
   it('appends the CA badge as a 15th column only in the corrective workspace', () => {
     expect(cells(renderRow({}, { mode: 'corrective' }))).toHaveLength(15);
     expect(cells(renderRow())).toHaveLength(14);
+  });
+});
+
+describe('QPN cell', () => {
+  it('offers a compact Add action when nothing is attached', () => {
+    const markup = renderRow();
+
+    expect(cells(markup)[11]).toBe('＋ Add');
+    expect(markup).toContain('class="qpn-action qpn-add"');
+    // A real file input backs the browser upload path.
+    expect(markup).toContain('type="file"');
+    expect(markup).not.toContain('qpn-more');
+  });
+
+  it('offers Open plus an overflow menu once a report is attached', () => {
+    const markup = renderRow({}, { reportIndex: withReport });
+
+    expect(cells(markup)[11]).toBe('📄 Open⋯');
+    expect(markup).toContain('Change file');
+    expect(markup).toContain('Remove file');
+  });
+
+  it('opens through the existing per-record report streaming endpoint', () => {
+    const markup = renderRow({}, { reportIndex: withReport });
+
+    expect(markup).toContain('href="/api/records/number%3A7/report"');
+    expect(markup).toContain('target="_blank"');
+    expect(markup).toContain('rel="noreferrer"');
+    // The full local path is never rendered; only the file name, as a tooltip.
+    expect(markup).toContain('title="Countermeasure.pdf"');
+    expect(markup).not.toContain('/reports/');
+  });
+
+  it('binds the QPN actions to the type-preserving canonical record id', () => {
+    const markup = renderRow({ id: '7' }, {
+      reportIndex: createReportIndex([{ recordIdKey: 'string:7', originalName: 'Other.pdf' }]),
+    });
+
+    expect(markup).toContain('href="/api/records/string%3A7/report"');
+  });
+
+  it('still works when other columns are hidden', () => {
+    const hidden = ALL_COLUMNS.filter((key) => key === 'no' || key === 'title' || key === 'qpn');
+    const markup = renderRow({}, { columns: hidden, reportIndex: withReport });
+
+    expect(cells(markup)).toHaveLength(3);
+    expect(markup).toContain('href="/api/records/number%3A7/report"');
+  });
+});
+
+describe('column visibility in the row', () => {
+  it('hides only the unchecked columns and keeps the rest in order', () => {
+    const shown = ALL_COLUMNS.filter((key) => key !== 'mqis' && key !== 'plant');
+
+    expect(cells(renderRow({}, { columns: shown }))).toEqual([
+      '1',
+      '01 Oct 2026',
+      'Nguyen Van A',
+      'Đợi đối sách',
+      'Body scratch',
+      'Line 3',
+      'Welding',
+      'Scratch on left panel',
+      '—',
+      '＋ Add',
+      '15 Oct 2026TNP deadline',
+      '-3',
+    ]);
+  });
+
+  it('restores a column when it is checked again', () => {
+    const hidden = ALL_COLUMNS.filter((key) => key !== 'pic');
+    expect(cells(renderRow({}, { columns: hidden }))).toHaveLength(13);
+    expect(cells(renderRow({}, { columns: ALL_COLUMNS }))).toHaveLength(14);
+  });
+
+  it('does not alter the record when a column is hidden', () => {
+    const source = record();
+    const before = JSON.stringify(source);
+
+    renderRow({}, { columns: ['no', 'title', 'qpn'] });
+
+    expect(JSON.stringify(source)).toBe(before);
+    expect(source.mqisCode).toBe('MQIS-8891');
+    expect(source.plant).toBe('TNP');
+    expect(source.registeredDate).toBe('2026-10-01');
+    expect(source.dueDate).toBe('2026-10-15');
   });
 });

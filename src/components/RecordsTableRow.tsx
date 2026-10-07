@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import type { DefectRecord } from '../models/defect-record';
 import type { Locale } from '../i18n';
 import { translate } from '../i18n';
@@ -10,8 +11,8 @@ import {
 } from '../business/records/recordsTable';
 import { isCompletedStatus } from '../business/status/status';
 import { isRejectedStatus } from '../business/status/status';
-import { serverApi } from '../services/server/serverRecordRepository';
 import { displayDate } from '../utils/displayDate';
+import QpnCell from './QpnCell';
 
 /** Text form of a cell's source value; `null` means the cell shows the em dash placeholder. */
 export function cellText(record: DefectRecord, column: RecordsTableColumnKey, today: string): string | null {
@@ -34,12 +35,16 @@ interface RecordsTableRowProps {
   today: string;
   reportIndex: ReportIndex;
   showCaLink: boolean;
+  /** Columns currently visible, in approved order; the CA badge is appended when shown. */
+  columns: readonly RecordsTableColumnKey[];
   onSelect: (record: DefectRecord) => void;
+  /** Called after a QPN attachment change so the row refreshes without a full reload. */
+  onReportChanged: () => void;
 }
 
 /**
- * One row of the approved 14-column Records table, rendered in the approved order.
- * The corrective workspace appends the pre-existing CA-file badge as a 15th column.
+ * One row of the approved Records table, rendering only the visible columns in the
+ * approved order. The corrective workspace appends the pre-existing CA-file badge.
  */
 export default function RecordsTableRow({
   locale,
@@ -48,7 +53,9 @@ export default function RecordsTableRow({
   today,
   reportIndex,
   showCaLink,
+  columns,
   onSelect,
+  onReportChanged,
 }: RecordsTableRowProps) {
   const mqis = cellText(record, 'mqis', today);
   const registeredDate = cellText(record, 'registeredDate', today);
@@ -61,9 +68,15 @@ export default function RecordsTableRow({
   const defectName = cellText(record, 'defectName', today);
   const tatDeadline = cellText(record, 'tatSystem', today);
   const pendingDays = getRecordCellSource(record, 'pendingDays', today);
-  const qpn = findAttachedReport(record, reportIndex);
+  const report = findAttachedReport(record, reportIndex);
   const hasCaLink = Boolean(record.caFileLink?.trim());
   const placeholder = <span className="unassigned-value">—</span>;
+  const shown = new Set(columns);
+
+  /** Renders one approved cell, or nothing when the user hid that column. */
+  function cell(key: RecordsTableColumnKey, content: ReactNode) {
+    return shown.has(key) ? content : null;
+  }
 
   return (
     <tr
@@ -71,43 +84,44 @@ export default function RecordsTableRow({
       onClick={() => onSelect(record)}
     >
       {/* NO is the rendered row sequence only. */}
-      <td className="row-sequence-cell">{sequence}</td>
-      <td className="mqis-cell" title={mqis ?? undefined}>{mqis ?? placeholder}</td>
-      <td className="date-cell">{displayDate(registeredDate, locale)}</td>
-      <td className="pic-cell">{pic ?? placeholder}</td>
-      <td className="approval-cell">
-        {approval
-          ? <span className={`status-pill ${statusTone(approval)}`}>{approval}</span>
-          : placeholder}
-      </td>
-      <td className="plant-cell">{plant ?? placeholder}</td>
-      <td className="title-cell" title={title ?? undefined}>{title ?? placeholder}</td>
-      <td className="occur-place-cell" title={occurPlace ?? undefined}>{occurPlace ?? placeholder}</td>
-      <td className="part-group-cell" title={partGroup ?? undefined}>{partGroup ?? placeholder}</td>
-      <td className="defect-name-cell" title={defectName ?? undefined}>{defectName ?? placeholder}</td>
+      {cell('no', <td className="row-sequence-cell" key="no">{sequence}</td>)}
+      {cell('mqis', <td className="mqis-cell" key="mqis" title={mqis ?? undefined}>{mqis ?? placeholder}</td>)}
+      {cell('registeredDate', <td className="date-cell" key="registeredDate">{displayDate(registeredDate, locale)}</td>)}
+      {cell('pic', <td className="pic-cell" key="pic">{pic ?? placeholder}</td>)}
+      {cell('approval', (
+        <td className="approval-cell" key="approval">
+          {approval
+            ? <span className={`status-pill ${statusTone(approval)}`}>{approval}</span>
+            : placeholder}
+        </td>
+      ))}
+      {cell('plant', <td className="plant-cell" key="plant">{plant ?? placeholder}</td>)}
+      {cell('title', <td className="title-cell" key="title" title={title ?? undefined}>{title ?? placeholder}</td>)}
+      {cell('occurPlace', <td className="occur-place-cell" key="occurPlace" title={occurPlace ?? undefined}>{occurPlace ?? placeholder}</td>)}
+      {cell('partGroup', <td className="part-group-cell" key="partGroup" title={partGroup ?? undefined}>{partGroup ?? placeholder}</td>)}
+      {cell('defectName', <td className="defect-name-cell" key="defectName" title={defectName ?? undefined}>{defectName ?? placeholder}</td>)}
       {/* Tình trạng has no verified source field, so the column spec returns null and this cell is always "—". */}
-      <td className="condition-cell">{cellText(record, 'condition', today) ?? placeholder}</td>
-      <td className="qpn-cell">
-        {qpn ? (
-          <a
-            className="qpn-file-link"
-            href={serverApi.reportUrl(record.id)}
-            target="_blank"
-            rel="noreferrer"
-            title={qpn.originalName}
-            aria-label={`${translate(locale, 'qpnFileLabel')}: ${qpn.originalName}`}
-            onClick={(event) => event.stopPropagation()}
-          >
-            {translate(locale, 'qpnFileLabel')}
-          </a>
-        ) : placeholder}
-      </td>
-      <td className="date-cell deadline-cell">
-        {displayDate(tatDeadline, locale)}
-        {tatDeadline && <small>{translate(locale, hasSourceTatDeadline(record) ? 'sourceDeadline' : 'fallbackDeadline')}</small>}
-      </td>
-      {/* Ngày Pending is derived from registeredDate only; it never reads dueDate. */}
-      <td className="pending-cell">{pendingDays === null ? placeholder : pendingDays}</td>
+      {cell('condition', <td className="condition-cell" key="condition">{cellText(record, 'condition', today) ?? placeholder}</td>)}
+      {cell('qpn', (
+        <td className="qpn-cell" key="qpn">
+          <QpnCell locale={locale} record={record} report={report} onChanged={onReportChanged} />
+        </td>
+      ))}
+      {cell('tatSystem', (
+        <td className="date-cell deadline-cell" key="tatSystem">
+          {displayDate(tatDeadline, locale)}
+          {tatDeadline && <small>{translate(locale, hasSourceTatDeadline(record) ? 'sourceDeadline' : 'fallbackDeadline')}</small>}
+        </td>
+      ))}
+      {/*
+        Ngày Pending is derived from registeredDate only and never reads dueDate. It renders
+        blank — not 0, not "—" — when the defect is no longer in the active response stage.
+      */}
+      {cell('pendingDays', (
+        <td className={pendingDays === null ? 'pending-cell pending-blank' : 'pending-cell'} key="pendingDays">
+          {pendingDays ?? ''}
+        </td>
+      ))}
       {showCaLink && (
         <td className="ca-link-cell" title={hasCaLink ? record.caFileLink ?? undefined : undefined}>
           <span className={hasCaLink ? 'ca-link-state attached' : 'ca-link-state missing'}>
