@@ -1,4 +1,4 @@
-# TNP Defect Management System — Development Architecture (Phases 1–3)
+# TNP Defect Management System — Development Architecture (Phases 1–5)
 
 ## 1. Scope and decisions
 
@@ -6,7 +6,11 @@ Phase 1 is a **local-first development web application**. It does not add cloud 
 
 The legacy HTML has been reverse-engineered first; detailed behaviors are in [`legacy-analysis.md`](./legacy-analysis.md). Existing business rules are implemented as pure modules before a full dashboard is started. Any deviation from legacy behavior needs a recorded reason and, where business intent is uncertain, user confirmation.
 
-Phase 2 provides a validated local TNP file-import flow and a compact Records workspace. Phase 3 adds repository-backed Analysis and TAT dashboards plus Corrective Actions and Rejected work views on the shared Records workspace. The approved Phase 2 boundaries and Phase 3 addendum are documented in [`phase2-simplification-review.md`](./phase2-simplification-review.md). Release packaging and production deployment remain out of scope.
+Phase 2 provides a validated local TNP file-import flow and a compact Records workspace. Phase 3 adds repository-backed Analysis and TAT dashboards plus Corrective Actions and Rejected work views on the shared Records workspace. The approved Phase 2 boundaries and Phase 3 addendum are documented in [`phase2-simplification-review.md`](./phase2-simplification-review.md).
+
+Phase 4 validates the flow against the real TNP export workbook.
+
+**Phase 5 changes the authoritative persistence and runtime architecture, not the approved business behavior.** The browser no longer owns the data: a local Node server owns a SQLite database, and React reaches it through an API data service. Every rule from Phases 1–4 is unchanged — the canonical record model, the 191-record seed, all 34 source fields and `sourceExtras`, the Records workspace, the detail drawer, Home, Analysis, TAT Monitoring, Corrective Actions, Rejected, the effective-TAT rule, priority sorting, the import parser and the strict `status` + `dueDate` matched-record whitelist. Phase 5 adds the server, append-only audit history, optimistic concurrency, SQLite backups, managed report storage and explicit IndexedDB migration. Full detail is in [`phase5-server-runtime.md`](./phase5-server-runtime.md). Release packaging and production deployment remain out of scope.
 
 ## 2. Dependency direction
 
@@ -46,7 +50,14 @@ See section B in the legacy analysis for per-field meaning, source, editability 
 
 ## 4. Persistence design
 
-### IndexedDB schema (development v1)
+**Since Phase 5 the authoritative runtime database is SQLite, owned by the local Node server.**
+The browser never opens the database file and never receives a path to it. The IndexedDB
+design below is retained because the old store still exists in operators' browsers and is
+the source for the explicit one-way migration; the runtime code path is
+`React → API data service → local Node server → SQLite`. See
+[`phase5-server-runtime.md`](./phase5-server-runtime.md) and section 11.
+
+### IndexedDB schema (legacy development store, isolated since Phase 5)
 
 Database name is namespaced for the new app and does not overwrite the legacy database. Stores:
 
@@ -110,6 +121,210 @@ Parser validation errors identify the source row/field where available and block
 
 Vitest tests pure status/TAT/duplicate/KPI/filters logic and IndexedDB repository operations with `fake-indexeddb`. Required persistence cases include add, update without ID change, reload from a new repository instance, bulk write, import history, and protection against repeated duplicate imports. Tests use isolated database names and never touch the user’s browser data.
 
-## 10. Deferred work (not implemented in Phase 3)
+## 10. Deferred work
 
-Manual record-entry UI, CSV export, arbitrary local-path opening for CA files, persisted personal filter preferences, explicit browser-origin legacy-data migration, advanced backup/restore and destructive data controls remain deferred. Installer/portable/executable, auto-updater, production release and deployment remain explicitly out of scope. The legacy on-time KPI denominator and status semantics for `Đợi duyệt` / `Đợi xét` are unchanged and are not redefined by Analysis.
+Manual record-entry UI, CSV export and persisted personal filter preferences remain deferred.
+Destructive one-click restore/reset is deliberately **not** implemented: backups are listed and
+sized, and a restore is a manual operator action taken while the server is stopped.
+Authentication, TLS and any public-Internet exposure are out of scope, as are an auto-updater,
+code signing, a production release and any deployment. The legacy on-time KPI denominator and
+status semantics for `Đợi duyệt` / `Đợi xét` are unchanged and are not redefined by Analysis.
+
+Native Windows file opening and a portable executable were deferred until **Phase 6** and are
+now implemented; see section 12.
+
+## 11. Phase 5 server runtime
+
+### Dependency direction
+
+```
+React UI → src/services/server (API data service) → HTTP → server/ (Node) → SQLite (data/tnp.db)
+```
+
+UI components contain no SQL and no server logic. `ServerRecordRepository` implements the same
+`RecordStore` surface the IndexedDB repository did, so the approved `RecordService` runs
+unchanged against either backend.
+
+### SQLite schema
+
+`PRAGMA user_version` is the schema level; migrations are an ordered, append-only list and run
+once inside a transaction. Version 1 creates `records`, `audit_events`, `import_history`,
+`reports`, `report_files`, `backups` and `metadata`.
+
+`records` stores the full canonical record as a JSON `payload` — which keeps all 34 source
+fields, `sourceExtras` and any extension field losslessly — plus indexed projection columns
+(`mgmt_no`, `status`, `fingerprint`, dates) and a `version` revision counter. Record identity
+keeps its type: `id_key` is `number:1` or `string:i-…`, so `1` and `"1"` never collide.
+Record ordering mirrors the IndexedDB store (numeric ids first, then string ids) because the
+shared identity index is last-entry-wins.
+
+`audit_events` is append-only, enforced by `BEFORE UPDATE` / `BEFORE DELETE` triggers that
+`RAISE(ABORT)`.
+
+### Seeding and idempotency
+
+A fresh database is seeded with exactly the 191 canonical records and a seed marker, in one
+transaction. An existing database is never reseeded or overwritten; startup is idempotent and
+reports `alreadyInitialized`.
+
+### Optimistic concurrency
+
+Every record carries a revision. A write must present the revision it read
+(`expectedVersion`); a stale write is rejected with **HTTP 409** and the client refetches, so
+two workstations can never silently overwrite each other.
+
+### Audit history
+
+One save produces one grouped event carrying the timestamp, operation, canonical record id,
+management number, every changed field with old and new values, the import batch id, the
+transport client address and an optional self-declared workstation label. The address and label
+identify a connection, **not** a person. Anything that looks like an absolute host path is
+reduced to its file name before storage, and report bytes never enter history.
+
+### Backups
+
+Snapshots use SQLite's own online backup API, which is safe on a live WAL database — a plain
+file copy is never used. Three kinds exist: an automatic daily snapshot on the first write of
+each calendar day, a pre-import snapshot taken before every import transaction, and manual
+snapshots. Retention is bounded, so the folder cannot grow without bound.
+
+### Reports
+
+Reports are linked to a canonical record id; the file name is never identity. Stored names are
+server-generated and may not contain a path separator, traversal sequence or absolute path.
+Containment is verified lexically **and** on the real path, so file and directory symlinks
+cannot escape managed storage. A missing file reports an explicit unavailable state and keeps
+its link; unlinking removes only the association and leaves the bytes on disk. There is no
+general filesystem endpoint.
+
+### Import transaction
+
+`pre-import backup → transaction (match, whitelist sync, audit, import history) → commit`.
+Any failure rolls the transaction back, so a partially applied import is impossible. The
+matched-record whitelist remains exactly `status` and `dueDate`, enforced by the same shared
+module the browser preview uses.
+
+### LAN
+
+The server binds `127.0.0.1` by default. LAN exposure requires an explicit `--lan`,
+`TNP_LAN=1` or `data/server.json`, and binds `0.0.0.0`. No owner IP is hardcoded, no firewall
+rule is modified, and the status endpoint reports the live bind address, the actual port, the
+LAN state and usable LAN URLs. LAN mode has **no authentication and no TLS** and must only be
+used on a trusted internal network; other PCs may need the app allowed through the Windows
+Private-network firewall. Configuration is deliberately not writable over HTTP, so a LAN client
+cannot change it.
+
+### Process ownership
+
+A lock file in `data/` ensures one server owns a data directory at a time. A second start is
+refused with an explicit message; a stale lock from a dead process is taken over.
+
+## 12. Phase 6 desktop wrapper
+
+Phase 6 adds an Electron shell around the Phase 5 runtime without changing any Phase 5 rule.
+See [`phase6-windows-test-portable.md`](phase6-windows-test-portable.md) for the owner-facing
+detail.
+
+### Dependency direction
+
+```
+Electron main ─spawn→ node (ELECTRON_RUN_AS_NODE) → Phase 5 server → SQLite
+      └──────────── BrowserWindow → http://127.0.0.1:<port> ────────┘
+```
+
+The desktop never imports the database layer and never issues SQL. It is a window, a process
+supervisor and a native-file bridge. `desktop/main/paths.ts` and `desktop/main/bridgeCore.ts`
+import no Electron API, so the layout and security rules are unit tested directly.
+
+### Startup handshake
+
+`server/startupSignals.ts` emits one JSON line per outcome — `TNP_READY {…}` on success and
+`TNP_FATAL {reason, message}` on refusal — parsed from **both** stdout and stderr, because a
+refusal is written to stderr. This is how the desktop learns the port it actually bound and
+distinguishes a database lock from a port conflict from a missing seed. Only a port conflict
+is retried, on a freshly probed free port; the desktop never attaches to whatever already
+holds the preferred port.
+
+### Portable layout
+
+The data root is the executable's folder when that folder is writable, otherwise the per-user
+app-data folder, with the reason surfaced in the UI. `TNP_DATA_ROOT` overrides both. `data/`,
+`backups/` and `reports/` sit under that root exactly as in Phase 5.
+
+### Native file bridge
+
+The renderer is untrusted. It cannot pass a filesystem path in: attaching uses an opaque,
+single-use, five-minute token minted from a native picker, and opening asks the loopback
+server to resolve the record's managed report. `GET /api/records/:id/report-path` is gated on
+`config.desktopBridge` **and** a loopback peer address, so a plain server returns 404 and a
+LAN client is rejected; the desktop then re-checks containment against the managed folder
+before calling `shell.openPath`. There is no `exec`, no `openExternal` and no filesystem
+browser. The preload exposes nine named channels, with `contextIsolation` on,
+`nodeIntegration` off, `sandbox` on, popups denied and navigation pinned to its own server.
+
+### Static bundle serving
+
+The server serves the built UI from `staticDir`. Bundle assets live in subfolders, so the
+static route resolves them with `resolveContainedSubPath`, which permits nesting while still
+rejecting traversal, absolute paths, drive letters and symlink escapes. The flat
+`resolveContainedPath` remains the rule for reports and backups. A missing asset returns 404;
+only a navigation falls back to the SPA entry point, because answering a `.js` request with
+`index.html` and HTTP 200 makes the browser refuse to execute it and renders a blank window.
+
+### Packaging
+
+`scripts/package-portable.mjs` assembles a plain folder — Electron runtime plus
+`resources/app/{dist,server-runtime,seed,web}` — with no installer and no release. It refuses
+to ship the company workbook or any runtime folder, verifies the seed is exactly 191 records,
+and verifies the assembled tree.
+
+`resources/app/dist` must be the whole of `dist-desktop`, preserving the layout `tsc` emitted.
+The desktop main process requires `../../server/startupSignals`, so `dist/server/` has to sit
+beside `dist/desktop/`; copying only the `desktop/` subtree yields a folder that assembles
+cleanly and then fails at startup. `tests/portable/runtime.test.ts` assembles a real build
+against a stand-in runtime, walks every `require()` in the packaged chain resolving it as Node
+would, and actually loads the packaged `serverProcess` and `startupSignals` modules. If the pinned Electron runtime cannot be downloaded the
+script reports `BLOCKED` and changes nothing: no version bump, no mirror substitution.
+
+## 13. Phase 7 LAN auto-update
+
+The updater lives entirely under `desktop/update/` and is compiled by `tsconfig.desktop.json`
+alongside the desktop wrapper, so it ships inside `resources/app/dist/desktop/update/` with no
+extra packaging step.
+
+| Module | Responsibility |
+|---|---|
+| `manifest.ts` | strict manifest parsing, build ordering, package-name safety |
+| `layout.ts` | the update working area, and the preserved-directory contract |
+| `archive.ts` | ZIP central-directory reader, ZIP-slip guard, extract/create |
+| `transfer.ts` | chunked copy with real byte progress, `.partial` then rename |
+| `hash.ts` | streaming SHA256, timing-safe comparison |
+| `packageInspect.ts` | the runtime-only package contract and identity check |
+| `checkForUpdate.ts` | the non-blocking check and `[Later]` suppression |
+| `install.ts` | runtime backup, replace and rollback, with preservation guards |
+| `updaterCore.ts` | the client state machine, Electron-free and unit tested |
+| `helperMain.ts` | the detached helper that swaps the runtime after TNP exits |
+| `publish.ts` | the publisher, invoked as `node dist-desktop/desktop/update/publish.js` |
+| `source.ts` | the LAN folder as an update source |
+
+`desktop/main/updater.ts` is the only Electron-facing piece: it resolves the runtime root,
+registers five IPC channels, and pushes state to the renderer on `tnp:update-state`.
+
+Three rules make the whole design safe:
+
+1. **Nothing is written to the running runtime until the package is copied, hashed, validated
+   and extracted.** A failure at any of those points leaves the working build untouched.
+2. **The running EXE is never overwritten by the process that owns it.** The swap is done by a
+   detached helper running from the *staged* runtime, using the Electron binary as a plain Node
+   host (`ELECTRON_RUN_AS_NODE=1`), so no Node install is needed on the Owner PC.
+3. **Production state is excluded by construction, not by care.** `data/`, `backups/` and
+   `reports/` are recorded as preserved paths, filtered out of the runtime entry list, guarded
+   on every filesystem operation, and rejected if they ever appear in a package.
+
+There are two unrelated backups and the distinction matters: SQLite snapshots in `backups/`
+(owner data, made by the server) and the runtime rollback copy in `.tnp-update/runtime-backup/`
+(application files, made by the updater). A failed update restores the *application*. It never
+restores a database.
+
+Full details, the publishing order and the test matrix are in
+[`phase7-lan-auto-update.md`](./phase7-lan-auto-update.md).

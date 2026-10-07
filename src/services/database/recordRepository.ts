@@ -38,7 +38,25 @@ function requestFailure(error: DOMException | null, operation: string): Database
   return new DatabaseOperationError(`${operation} failed.`, { cause: error ?? undefined });
 }
 
-export class RecordRepository {
+/**
+ * The persistence surface the record and import services depend on. The authoritative
+ * Node/SQLite server implements the same shape, so the approved business behavior is
+ * shared by both runtimes.
+ */
+export interface RecordStore {
+  getAllRecords(): Promise<DefectRecord[]>;
+  getRecord(id: RecordId): Promise<DefectRecord | undefined>;
+  addRecord(record: DefectRecord): Promise<void>;
+  updateRecord(id: RecordId, record: DefectRecord): Promise<DefectRecord>;
+  deleteRecord(id: RecordId): Promise<void>;
+  bulkUpsert(changes: readonly RecordChange[]): Promise<void>;
+  commitImport(changes: readonly RecordChange[], history: ImportHistoryEntry): Promise<void>;
+  getImportHistory(): Promise<ImportHistoryEntry[]>;
+  initializeFromSeed(seedRecords: readonly DefectRecord[]): Promise<SeedResult>;
+  clearImportedData(seedRecords: readonly DefectRecord[]): Promise<{ removed: number }>;
+}
+
+export class RecordRepository implements RecordStore {
   constructor(private readonly database: IndexedDbDatabase) {}
 
   async getAllRecords(): Promise<DefectRecord[]> {

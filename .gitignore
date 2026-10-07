@@ -1,11 +1,33 @@
 node_modules/
 dist/
+dist-server/
+dist-desktop/
 coverage/
+
+# Downloaded Electron runtime archives and their extraction.
+.cache/
 *.log
 .env
 .env.*.local
 .DS_Store
 Thumbs.db
 
-# Validation/company data; keep other intentional Excel fixtures trackable.
+# Phase 5 runtime state at the project root. Anchored so src/data (the canonical seed)
+# is never ignored.
+/data/
+/backups/
+/reports/
+/artifacts/
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+
+# Never commit the real company workbook.
 /EXCEL_EXPORT_FILE_20261002181424.xlsx
+*.xlsx
+*.xls
+
+# Local migration exports may contain company data.
+tnp-indexeddb-export-*.json

@@ -1,8 +1,15 @@
+import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import * as XLSX from '@e965/xlsx';
 import { describe, expect, it } from 'vitest';
 import { parseTnpFile } from './tnpFileParser';
+
+// Same convention as realWorkbook.integration.test.ts: the validation workbook is
+// company data, is gitignored, and is absent from a clean checkout.
+const workbookName = 'EXCEL_EXPORT_FILE_20261002181424.xlsx';
+const workbookPath = resolve(process.cwd(), workbookName);
+const realWorkbookTest = existsSync(workbookPath) ? it : it.skip;
 
 function toArrayBuffer(value: ArrayBuffer | Uint8Array): ArrayBuffer {
   if (value instanceof ArrayBuffer) return value;
@@ -58,9 +65,9 @@ describe('TNP XLSX/XLS/CSV parser', () => {
     });
   });
 
-  it('recovers the real TNP export rows when its declared worksheet range is too short', async () => {
-    const fileName = 'EXCEL_EXPORT_FILE_20261002181424.xlsx';
-    const bytes = await readFile(resolve(process.cwd(), fileName));
+  realWorkbookTest('recovers the real TNP export rows when its declared worksheet range is too short', async () => {
+    const fileName = workbookName;
+    const bytes = await readFile(workbookPath);
     const parsed = await parseTnpFile(fileFromBytes(fileName, bytes));
 
     expect(parsed).toMatchObject({

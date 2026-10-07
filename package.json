@@ -1,13 +1,31 @@
 {
   "name": "tnp-defect-management-dev",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
+  "tnpBuild": 1,
   "type": "module",
   "scripts": {
-    "dev": "vite --host 0.0.0.0",
+    "dev": "node scripts/dev.mjs",
+    "dev:web": "vite --host 0.0.0.0",
+    "dev:server": "npm run build:server && node dist-server/server/index.js",
+    "build": "vite build",
+    "build:server": "tsc -p tsconfig.server.json && node scripts/finalize-server-build.mjs",
+    "start": "npm run build:server && node dist-server/server/index.js",
+    "start:lan": "npm run build:server && node dist-server/server/index.js --lan",
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "tsc --noEmit"
+    "test:server": "vitest run tests/server",
+    "migrate:indexeddb": "npm run build:server && node dist-server/server/migrateIndexedDb.js",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.server.json --noEmit && tsc -p tsconfig.desktop.json --noEmit",
+    "build:desktop": "tsc -p tsconfig.desktop.json && node scripts/finalize-desktop-build.mjs",
+    "build:portable": "npm run build && npm run build:server && npm run build:desktop",
+    "package:portable": "npm run build:portable && node scripts/package-portable.mjs",
+    "desktop": "node scripts/dev-desktop.mjs",
+    "test:portable": "vitest run tests/portable",
+    "build:portable-server": "npm run build:server",
+    "test:portable-runtime": "vitest run tests/portable/runtime.test.ts",
+    "update:publish": "npm run package:portable && npm run build:desktop && node dist-desktop/desktop/update/publish.js",
+    "test:update": "vitest run tests/update"
   },
   "dependencies": {
     "@e965/xlsx": "^0.20.3",
@@ -20,9 +38,11 @@
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.1.1",
+    "electron": "44.5.1",
     "fake-indexeddb": "^6.2.5",
     "typescript": "^5.9.3",
     "vite": "^8.3.2",
     "vitest": "^5.0.3"
-  }
+  },
+  "main": "dist-desktop/desktop/main/main.js"
 }

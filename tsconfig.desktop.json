@@ -1,0 +1,36 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "module": "CommonJS",
+    "moduleResolution": "Node10",
+    "verbatimModuleSyntax": false,
+    "allowImportingTsExtensions": false,
+    "resolveJsonModule": false,
+    "noEmit": false,
+    "declaration": false,
+    "sourceMap": false,
+    "outDir": "dist-desktop",
+    "rootDir": ".",
+    "lib": [
+      "ES2022",
+      "DOM",
+      "DOM.Iterable"
+    ],
+    "types": [
+      "node"
+    ],
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true
+  },
+  "include": [
+    "desktop/**/*.ts",
+    "server/startupSignals.ts"
+  ],
+  "exclude": [
+    "**/*.test.ts",
+    "node_modules",
+    "dist",
+    "dist-server",
+    "dist-desktop"
+  ]
+}

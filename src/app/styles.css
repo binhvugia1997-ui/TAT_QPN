@@ -442,3 +442,353 @@ button:disabled { cursor: not-allowed; opacity: .62; }
 .rejected-summary-strip > button:hover, .rejected-summary-strip > button[aria-pressed="true"] { color: #97333f; background: #fbf1f2; border-color: #e8c8cb; }
 .rejected-summary-strip strong { color: #28382d; font-size: 12px; }
 .status-distribution-panel .analysis-bar-list { max-height: 210px; overflow-y: auto; padding-right: 3px; }
+
+/* ---------- Phase 5: server status, backups, history and managed reports ---------- */
+
+.local-badge.lan-enabled {
+  border-color: #b45309;
+  color: #92400e;
+}
+
+.local-badge.lan-enabled .local-dot {
+  background: #f59e0b;
+}
+
+.server-hint {
+  margin: 0.5rem 0 0;
+  color: var(--muted, #64748b);
+}
+
+.system-grid {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  margin-bottom: 1rem;
+}
+
+.system-page .panel {
+  border: 1px solid var(--border, #e2e8f0);
+  border-radius: 12px;
+  padding: 1rem;
+  background: var(--surface, #fff);
+}
+
+.system-page .panel h3 {
+  margin: 0 0 0.5rem;
+  font-size: 0.95rem;
+}
+
+.status-list {
+  display: grid;
+  gap: 0.25rem;
+  margin: 0 0 0.75rem;
+}
+
+.status-list div {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  font-size: 0.85rem;
+}
+
+.status-list dt {
+  color: var(--muted, #64748b);
+}
+
+.status-list dd {
+  margin: 0;
+  font-weight: 600;
+  word-break: break-all;
+}
+
+.lan-state {
+  font-weight: 600;
+  margin: 0 0 0.5rem;
+}
+
+.lan-state.on {
+  color: #92400e;
+}
+
+.lan-address-list,
+.backup-list,
+.history-list,
+.record-history-list {
+  list-style: none;
+  margin: 0.5rem 0;
+  padding: 0;
+  display: grid;
+  gap: 0.25rem;
+  font-size: 0.82rem;
+}
+
+.lan-address-list li,
+.backup-list li,
+.history-list > li,
+.record-history-list > li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: baseline;
+  border-bottom: 1px solid var(--border, #e2e8f0);
+  padding-bottom: 0.25rem;
+}
+
+.lan-address-list code,
+.backup-list code,
+.history-line code {
+  background: var(--surface-muted, #f8fafc);
+  padding: 0.1rem 0.3rem;
+  border-radius: 4px;
+  word-break: break-all;
+}
+
+.empty {
+  color: var(--muted, #64748b);
+  font-style: italic;
+}
+
+.security-warning {
+  font-size: 0.82rem;
+  color: #92400e;
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  border-radius: 8px;
+  padding: 0.5rem;
+}
+
+.hint {
+  font-size: 0.8rem;
+  color: var(--muted, #64748b);
+  margin: 0.4rem 0;
+}
+
+.command-line {
+  display: block;
+  font-size: 0.78rem;
+  background: var(--surface-muted, #f8fafc);
+  border-radius: 6px;
+  padding: 0.35rem 0.5rem;
+  margin-top: 0.25rem;
+  word-break: break-all;
+}
+
+.history-panel {
+  border: 1px solid var(--border, #e2e8f0);
+  border-radius: 12px;
+  padding: 1rem;
+  background: var(--surface, #fff);
+}
+
+.history-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.field-control.compact {
+  max-width: 220px;
+}
+
+.history-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: baseline;
+  width: 100%;
+}
+
+.client-label {
+  font-size: 0.75rem;
+  background: var(--surface-muted, #f8fafc);
+  border-radius: 4px;
+  padding: 0.05rem 0.3rem;
+}
+
+.change-list {
+  list-style: none;
+  margin: 0.25rem 0 0.25rem 0.75rem;
+  padding: 0;
+  display: grid;
+  gap: 0.15rem;
+  width: 100%;
+}
+
+.change-list li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  font-size: 0.78rem;
+  align-items: baseline;
+}
+
+.change-list .old {
+  color: #b91c1c;
+  text-decoration: line-through;
+  word-break: break-all;
+}
+
+.change-list .new {
+  color: #047857;
+  word-break: break-all;
+}
+
+.change-list .arrow {
+  color: var(--muted, #64748b);
+}
+
+.report-section {
+  border-top: 1px solid var(--border, #e2e8f0);
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+}
+
+.report-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+  margin-bottom: 0.5rem;
+}
+
+.report-row code {
+  word-break: break-all;
+}
+
+.report-upload {
+  display: inline-block;
+  position: relative;
+  overflow: hidden;
+  cursor: pointer;
+}
+
+.report-upload input[type='file'] {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.history-details {
+  border-top: 1px solid var(--border, #e2e8f0);
+  margin-top: 0.75rem;
+  padding-top: 0.5rem;
+}
+
+/* ---------------------------------------------------------------------------
+   Phase 6 — Windows TEST desktop wrapper
+   Only rendered inside the Electron build; absent in a browser tab.
+   --------------------------------------------------------------------------- */
+
+.desktop-panel {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.desktop-facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 0.5rem 1rem;
+  margin: 0;
+}
+
+.desktop-facts > div {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+.desktop-facts dt {
+  font-size: 0.72rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  opacity: 0.65;
+}
+
+.desktop-facts dd {
+  margin: 0;
+  font-size: 0.85rem;
+  overflow-wrap: anywhere;
+}
+
+.desktop-facts code {
+  font-size: 0.78rem;
+  overflow-wrap: anywhere;
+}
+
+.desktop-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+}
+
+.desktop-label-row {
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.desktop-label-row input[type='text'] {
+  flex: 1 1 auto;
+  max-width: 280px;
+}
+
+.desktop-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.desktop-notice {
+  color: var(--color-positive, #1c7c4a);
+}
+
+.desktop-panel .warning-note {
+  margin: 0;
+  padding: 0.5rem 0.65rem;
+  border-left: 3px solid currentColor;
+  font-size: 0.8rem;
+  opacity: 0.9;
+}
+
+/* ------------------------------------------------------------------ */
+/* Phase 7 — LAN auto-update prompt                                    */
+/* ------------------------------------------------------------------ */
+.update-notice {
+  margin: 0 0 18px;
+  padding: 16px 18px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--orange);
+  border-radius: 10px;
+  display: grid;
+  gap: 10px;
+}
+.update-notice[data-phase="failed"] { border-left-color: var(--red); }
+.update-notice[data-phase="complete"] { border-left-color: var(--green); }
+.update-notice[data-phase="downloading"], .update-notice[data-phase="installing"] { border-left-color: var(--amber); }
+.update-notice h2 { margin: 0 0 6px; font-size: 1.05rem; }
+.update-notice p { margin: 0; }
+.update-notice-body { display: grid; gap: 4px; }
+.update-notice-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 6px; }
+.update-safety { font-size: 0.82rem; color: var(--muted); }
+.update-progress { display: grid; gap: 8px; }
+.update-progress-bar {
+  height: 10px;
+  background: #eceee7;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.update-progress-bar span {
+  display: block;
+  height: 100%;
+  background: var(--green);
+  transition: width 160ms ease-out;
+}
+.update-complete p { margin: 0; color: var(--green); font-weight: 600; }

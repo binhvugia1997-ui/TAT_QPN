@@ -6,7 +6,7 @@ import { createRecordId } from '../../utils/id';
 import {
   RecordAlreadyExistsError,
   RecordNotFoundError,
-  RecordRepository,
+  type RecordStore,
   type SeedResult,
 } from '../database/recordRepository';
 
@@ -29,7 +29,11 @@ function nullableInput(input: Record<string, unknown>, field: string): unknown {
   return typeof value === 'string' && value.trim() === '' ? null : value;
 }
 
-function buildManualRecord(input: Record<string, unknown>): DefectRecord {
+/**
+ * Shared with the Node/SQLite server so a record created through the API gets exactly the
+ * same defaults as one created in the browser.
+ */
+export function buildManualRecord(input: Record<string, unknown>): DefectRecord {
   const id = input.id ?? createRecordId('n');
   const rawManagementNumber = typeof input.mgmtNo === 'string' ? input.mgmtNo.trim() : '';
   const managementNumber = rawManagementNumber || `NEW-${String(id).slice(-6)}`;
@@ -79,7 +83,7 @@ function buildManualRecord(input: Record<string, unknown>): DefectRecord {
 }
 
 export class RecordService {
-  constructor(private readonly repository: RecordRepository) {}
+  constructor(private readonly repository: RecordStore) {}
 
   getAllRecords(): Promise<DefectRecord[]> {
     return this.repository.getAllRecords();

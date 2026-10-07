@@ -1,24 +1,41 @@
-import legacyBaseData from '../data/legacy-base-data.json';
-import { IndexedDbDatabase } from '../services/database/database';
-import { RecordRepository } from '../services/database/recordRepository';
-import { ImportService } from '../services/import/importService';
 import { RecordService } from '../services/records/recordService';
+import { serverApi, ServerRecordRepository } from '../services/server/serverRecordRepository';
+import type { ServerStatus } from '../services/server/serverRecordRepository';
+import { ServerImportService } from '../services/server/serverImportService';
+import type { SeedResult } from '../services/database/recordRepository';
+import type { DefectRecord } from '../models/defect-record';
 
-const database = new IndexedDbDatabase();
-export const recordRepository = new RecordRepository(database);
+/**
+ * Authoritative runtime wiring: React → API data service → local Node server → SQLite.
+ *
+ * The browser no longer opens IndexedDB for normal operation. The old IndexedDB modules
+ * stay in the tree, isolated, for the explicit one-way migration in
+ * `services/server/browserExport`.
+ */
+export const recordRepository = new ServerRecordRepository();
 export const recordService = new RecordService(recordRepository);
-export const importService = new ImportService(recordRepository);
+export const importService = new ServerImportService();
 
-let initializationPromise: ReturnType<typeof loadInitialData> | null = null;
-
-async function loadInitialData() {
-  const seed = await recordService.seedLegacyBase(legacyBaseData as unknown as Record<string, unknown>[]);
-  const records = await recordService.getAllRecords();
-  return { seed, records };
+export interface InitialData {
+  seed: SeedResult;
+  records: DefectRecord[];
+  status: ServerStatus;
 }
 
-export function initializeDevelopmentData() {
-  // React StrictMode may run effects twice in development; share one idempotent DB bootstrap.
+let initializationPromise: Promise<InitialData> | null = null;
+
+async function loadInitialData(): Promise<InitialData> {
+  // The server seeds and migrates its own database at startup, so the browser only reads
+  // the result. A fresh database receives exactly the canonical 191 records there.
+  const bootstrap = await serverApi.bootstrap();
+  const records = await recordService.getAllRecords();
+  return { seed: bootstrap.seed, records, status: bootstrap.status };
+}
+
+export function initializeDevelopmentData(): Promise<InitialData> {
+  // React StrictMode may run effects twice in development; share one bootstrap request.
   initializationPromise ??= loadInitialData();
   return initializationPromise;
 }
+
+export { serverApi };
