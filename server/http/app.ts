@@ -175,6 +175,25 @@ export function createHttpServer(options: HttpAppOptions): http.Server {
       return;
     }
 
+    /**
+     * GET /api/report-index
+     *
+     * Bulk index of which canonical records have a managed report attached, so a list
+     * screen can render a link per row with one request instead of one per record.
+     * Only the already-public report metadata is exposed: server-side stored names and
+     * absolute paths stay out, and the report bytes remain reachable exclusively through
+     * the per-record `/api/records/:id/report` route, which keeps its containment checks.
+     */
+    if (segments.length === 2 && segments[1] === 'report-index' && method === 'GET') {
+      sendJson(response, 200, {
+        reports: context.reportCatalog.listAll().map((link) => ({
+          recordIdKey: link.recordIdKey,
+          ...publicReport(link),
+        })),
+      });
+      return;
+    }
+
     // /api/records/:id[...]
     if (segments.length >= 3 && segments[1] === 'records') {
       const id = parseRecordIdParam(segments[2]);
