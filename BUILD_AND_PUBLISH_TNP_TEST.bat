@@ -178,8 +178,17 @@ call :step "dependency audit" "call npm audit --audit-level=high" || exit /b 1
 REM --- 7. Build the Windows x64 portable TEST runtime ---------------------
 call :step "portable build" "call npm run package:portable" || exit /b 1
 
-set "PORTABLE_DIR=%REPO_ROOT%\artifacts\TNP Defect Management System TEST"
+REM The folder is the packager's own default (scripts/package-portable.mjs, FOLDER_NAME). It is not
+REM the product name: the FOLDER is hyphenated while only the launcher inside it carries spaces
+REM ("TNP Defect Management TEST.exe"). A build made with --folder-name has to be pointed at here:
+REM   set "TNP_PORTABLE_DIR=D:\TAT TNP\TAT_QPN-main\artifacts\my-folder"
+set "PORTABLE_DIR=%TNP_PORTABLE_DIR%"
+if not defined PORTABLE_DIR set "PORTABLE_DIR=%REPO_ROOT%\artifacts\TNP-Defect-Management-TEST-win-x64"
 if not exist "%PORTABLE_DIR%\TNP Defect Management TEST.exe" (
+  REM The packager prints "Portable build ready: <path>"; listing what is actually here turns a
+  REM name-drift failure into something the operator can read off the screen instead of guess at.
+  call :log "contents of %LOG_DIR% :"
+  for /f "delims=" %%d in ('dir /b "%LOG_DIR%"') do call :log "  %%d"
   call :fail "The portable build did not produce its launcher at: %PORTABLE_DIR%"
   exit /b 1
 )

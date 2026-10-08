@@ -101,7 +101,9 @@ call :step "update tests" "call npm run test:update" || exit /b 1
 call :step "portable build" "call npm run package:portable" || exit /b 1
 
 echo.
-echo Built: "%REPO_ROOT%\artifacts\TNP Defect Management System TEST"
+echo Built: "%REPO_ROOT%\artifacts\TNP-Defect-Management-TEST-win-x64"
+echo If that folder is not the one the packager printed as "Portable build ready", you built with
+echo --folder-name, and BUILD_AND_PUBLISH_TNP_TEST.bat needs TNP_PORTABLE_DIR set to it.
 echo To publish it to the LAN, run BUILD_AND_PUBLISH_TNP_TEST.bat instead.
 endlocal
 exit /b 0

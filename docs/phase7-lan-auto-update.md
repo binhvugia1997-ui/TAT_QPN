@@ -210,7 +210,7 @@ which can take seconds, and the panel state is read on every open and refresh.
 
 ```
 npm run package:portable
-node dist-desktop/desktop/update/publish.js --source "artifacts\TNP Defect Management System TEST" --target "\\192.168.103.12\ReportExtractor_Update\TAT QPN\updates" --channel test --project . --notes "…"
+node dist-desktop/desktop/update/publish.js --source "artifacts\TNP-Defect-Management-TEST-win-x64" --target "\\192.168.103.12\ReportExtractor_Update\TAT QPN\updates" --channel test --project . --notes "…"
 
 # The pre-flight on its own, with nothing written: reachability, write permission,
 # the published build, and the build that would be used next.

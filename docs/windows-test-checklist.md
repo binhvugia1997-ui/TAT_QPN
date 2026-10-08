@@ -20,7 +20,7 @@ Companion documents: `docs/phase6-windows-test-portable.md` (what the portable b
 | Update folder | `\\192.168.103.12\ReportExtractor_Update\TAT QPN\updates` (note the space in `TAT QPN`) |
 | Roles | **build machine** = builds, tests, publishes. **Owner PC** = runs and updates itself. |
 | Never touched | `data\`, `backups\`, `reports\` on either machine — including `data\tnp.db` |
-| Expected launcher | `artifacts\TNP Defect Management System TEST\TNP Defect Management TEST.exe` |
+| Expected launcher | `artifacts\TNP-Defect-Management-TEST-win-x64\TNP Defect Management TEST.exe` |
 
 Do step 2 and step 3 on the build machine, then step 4 to publish, and only then step 5–6 on the
 Owner PC. Step 7 are the negative drills that prove the safety claims; skip nothing there, because
@@ -43,6 +43,8 @@ Get-Command Compress-Archive, Expand-Archive | Format-Table Name, Version
 $ExecutionContext.SessionState.LanguageMode      # must be FullLanguage, not ConstrainedLanguage
 
 # 2. The share is readable, writable, and is the folder you think it is.
+#    -Path rather than -LiteralPath for New-Item: it has no -LiteralPath parameter set on Windows
+#    PowerShell 5.1, and this path contains no wildcard character, so nothing is globbed.
 Get-Item -LiteralPath '\\192.168.103.12\ReportExtractor_Update\TAT QPN\updates' | Select-Object FullName
 New-Item -ItemType File -Path '\\192.168.103.12\ReportExtractor_Update\TAT QPN\updates\write-probe.tmp' -Force
 Remove-Item -LiteralPath '\\192.168.103.12\ReportExtractor_Update\TAT QPN\updates\write-probe.tmp'
@@ -74,18 +76,34 @@ npm run package:portable
 Verify the assembled folder, not just the exit code:
 
 ```powershell
-$portable = 'artifacts\TNP Defect Management System TEST'
+$portable = 'artifacts\TNP-Defect-Management-TEST-win-x64'
 Get-ChildItem -LiteralPath $portable | Measure-Object | Select-Object Count
+# These are the entries scripts/package-portable.mjs verifies before it declares the build done, so a
+# mismatch here is a broken build rather than a wrong checklist. `server-runtime` sits *inside*
+# resources\app — checking for it at the top level of the folder is a false alarm.
 foreach ($p in "$portable\TNP Defect Management TEST.exe",
                "$portable\resources\app\package.json",
+               "$portable\resources\app\dist\desktop\main\main.js",
+               "$portable\resources\app\dist\desktop\preload\preload.js",
+               "$portable\resources\app\dist\desktop\update\helperMain.js",
                "$portable\resources\app\dist\server\startupSignals.js",
                "$portable\resources\app\dist\src\utils\uncPath.js",
-               "$portable\server-runtime") {
+               "$portable\resources\app\server-runtime\server\index.js",
+               "$portable\resources\app\server-runtime\package.json",
+               "$portable\resources\app\web\index.html",
+               "$portable\resources\app\seed\legacy-base-data.json") {
   "{0,-6} {1}" -f (Test-Path -LiteralPath $p), $p
 }
 Get-Content -Raw -LiteralPath "$portable\resources\app\package.json" |
   ConvertFrom-Json | Select-Object version, tnpBuild
 ```
+
+The packager ends with `Portable build ready: <path>` — **that line is the authority on the folder
+name.** The default is `TNP-Defect-Management-TEST-win-x64` (`scripts/package-portable.mjs`,
+`FOLDER_NAME`), while the *launcher inside it* carries spaces (`APP_NAME` + `.exe`). A build made
+with `--folder-name=` writes elsewhere, and `BUILD_AND_PUBLISH_TNP_TEST.bat` then needs
+`set "TNP_PORTABLE_DIR=<that path>"` before it can find the launcher; `tests/portable/packageContract.test.ts`
+pins the two files to the same value so the drift cannot come back unremarked.
 
 **Expected.** `npm run package:portable` runs `build`, `build:server`, `build:desktop` and then
 `scripts/package-portable.mjs`, which refuses to ship the company workbook or any `data\`,
@@ -97,7 +115,7 @@ server handshake and the shared UNC rule module the desktop main process imports
 Also confirm nothing was created inside the production folders:
 
 ```powershell
-Get-ChildItem -LiteralPath '.\artifacts\TNP Defect Management System TEST' -Recurse -Directory |
+Get-ChildItem -LiteralPath ".\artifacts\TNP-Defect-Management-TEST-win-x64" -Recurse -Directory |
   Where-Object { $_.Name -in 'data', 'backups', 'reports' } | Select-Object FullName   # must print nothing
 ```
 
@@ -166,7 +184,7 @@ refusal.
 ```bat
 npm run package:portable
 npm run build:desktop
-node dist-desktop\desktop\update\publish.js --source "artifacts\TNP Defect Management System TEST" --target "\\192.168.103.12\ReportExtractor_Update\TAT QPN\updates" --channel test --project "." --notes "TEST build for Windows acceptance"
+node dist-desktop\desktop\update\publish.js --source "artifacts\TNP-Defect-Management-TEST-win-x64" --target "\\192.168.103.12\ReportExtractor_Update\TAT QPN\updates" --channel test --project "." --notes "TEST build for Windows acceptance"
 ```
 
 **Expected.** The step list printed at the end must read exactly:

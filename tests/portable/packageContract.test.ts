@@ -88,6 +88,30 @@ describe('portable package contract', () => {
     expect(paths).toContain("'web'");
   });
 
+  it('hands the batch publisher the folder the packager actually creates', () => {
+    // Fourth cross-file string, and the one that broke the one-click publish silently: the FOLDER is
+    // hyphenated (`TNP-Defect-Management-TEST-win-x64`) while only the launcher inside it carries
+    // spaces. The batch script had the product name as its folder, so step 7 looked for a launcher
+    // that the build never wrote there and refused to publish — on Windows only, where nobody could
+    // see why. Reading the default out of the packager rather than repeating it is the fix.
+    const packager = read('scripts/package-portable.mjs');
+    const folder = /const FOLDER_NAME = argv\.folderName \?\? '([^']+)'/.exec(packager)?.[1];
+    const launcher = /const APP_NAME = '([^']+)'/.exec(packager)?.[1];
+    expect(folder, 'the packager must keep a single default folder name').toBeTruthy();
+    expect(launcher, 'the packager must keep a single product name').toBeTruthy();
+
+    const publish = read('BUILD_AND_PUBLISH_TNP_TEST.bat');
+    expect(publish, `the publish script must look in ${folder}`).toContain(
+      `set "PORTABLE_DIR=%REPO_ROOT%\\artifacts\\${folder}"`,
+    );
+    expect(publish).toContain(`if not exist "%PORTABLE_DIR%\\${launcher}.exe"`);
+    // An operator who built with --folder-name has one documented way to redirect the run.
+    expect(publish).toContain('set "PORTABLE_DIR=%TNP_PORTABLE_DIR%"');
+    expect(publish).toContain('if not defined PORTABLE_DIR set');
+
+    expect(read('UPDATE_AND_BUILD_TNP.bat')).toContain(`artifacts\\${folder}`);
+  });
+
   it('refuses to ship company data or runtime folders', () => {
     const packager = read('scripts/package-portable.mjs');
     expect(packager).toContain('EXCEL_EXPORT_FILE_20261002181424.xlsx');
