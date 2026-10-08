@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
+import * as path from 'node:path';
 import { renderToStaticMarkup } from 'react-dom/server';
 import RecordDetailDrawer from './RecordDetailDrawer';
+import { MQIS_DISPLAY_FIELD } from '../business/records/recordsTable';
 import type { DefectRecord } from '../models/defect-record';
 
 /**
@@ -56,13 +59,15 @@ describe('record detail drawer source list', () => {
     const summary = Number(/<summary>[^<]*· (\d+)<\/summary>/u.exec(block)?.[1]);
 
     expect(Number.isFinite(summary)).toBe(true);
-    // id, mgmtNo and defectName. Before the exclusion this read 5, with the two manual columns
-    // counted as imported fields.
-    expect(summary).toBe(3);
+    // id and defectName. Before the exclusions this read 6: the two manual columns counted as
+    // imported fields, and the management number counted twice — once raw, once under its label.
+    expect(summary).toBe(2);
     // One more row than the count is rendered, and that is correct: the record's origin is added as
     // a labelled row of its own rather than dumped in as a raw `recordSource` field.
     const labels = [...block.matchAll(/<dt>([^<]*)<\/dt>/gu)].map((match) => match[1] as string);
-    expect(labels).toEqual(['Defect Name', 'Id', 'Mgmt No', 'Record origin']);
+    expect(labels).toEqual(['Defect Name', 'Id', 'Record origin']);
+    // The management number is not in the raw dump: it is shown under its own label above.
+    expect(labels).not.toContain('Mgmt No');
     expect(labels).not.toContain('Manual Condition');
     expect(labels).not.toContain('Manual Defect Name');
   });
@@ -91,5 +96,82 @@ describe('record detail drawer source list', () => {
     const markup = render({ manualDefectName: '   ', manualCondition: '' });
 
     expect(markup).not.toContain('Entered on this PC');
+  });
+});
+
+describe('the drawer\'s MQIS field', () => {
+  /** The component's own source, for the rules a render cannot express. */
+  const componentSource = readFileSync(
+    path.resolve(process.cwd(), 'src/components/RecordDetailDrawer.tsx'),
+    'utf8',
+  );
+  /** Everything outside the collapsed source list, i.e. the parts the operator edits or reads first. */
+  function mainSection(markup: string): string {
+    const start = markup.indexOf('<form');
+    const details = markup.indexOf('<details class="source-details"');
+    return markup.slice(start, details === -1 ? markup.length : details);
+  }
+
+  it('shows the Management Number the table column shows', () => {
+    const markup = render();
+
+    expect(mainSection(markup)).toContain('Management Number (MQIS)');
+    expect(mainSection(markup)).toContain('MQIS-12');
+    // React emits `readOnly`, and the attribute is the whole point: the value is copyable and
+    // announced, but it cannot be typed into.
+    expect(mainSection(markup)).toContain('readOnly');
+  });
+
+  it('reads the number through the table\'s own field constant, so the two cannot drift', () => {
+    // The bug this replaces was exactly a drift: the column was pointed at a different field than
+    // the form, so the table and the drawer showed different "MQIS" values for one record.
+    expect(componentSource).toContain('MQIS_DISPLAY_FIELD');
+    expect(componentSource).toContain('canonicalCodeText');
+    expect(MQIS_DISPLAY_FIELD).toBe('mgmtNo');
+  });
+
+  it('offers no independent MQIS input, and never sends mqisCode on save', () => {
+    // `mqisCode` is a legacy extension column. As a form field it let two numbers claim to be the
+    // record's MQIS; and because the old form initialised it from `record.mqisCode ?? ''`, every
+    // unrelated edit also rewrote a stored null as an empty string.
+    // Prose about the field is allowed; touching it is not. A property read or a patch key would
+    // both mean the drawer still treats it as an input it owns.
+    expect(componentSource).not.toMatch(/\.mqisCode\b/u);
+    expect(componentSource).not.toMatch(/^\s*mqisCode:/mu);
+    expect(componentSource).not.toMatch(/update\('mqisCode'/u);
+  });
+
+  it('keeps the legacy extension visible as source data instead of as an input', () => {
+    const markup = render({ mqisCode: 'MQIS-8891' });
+    const source = sourceBlock(markup);
+
+    expect(source).toContain('Mqis Code');
+    expect(source).toContain('MQIS-8891');
+  });
+
+  it('does not fall back to the extension when the management number is blank', () => {
+    const markup = render({ mgmtNo: '   ', mqisCode: 'MQIS-8891' });
+
+    // The field is empty, not secretly the other number: an operator who sees a blank MQIS row
+    // looks for the missing import column, which is the truth.
+    const row = mainSection(markup).match(/Management Number \(MQIS\)<\/span><input[^>]*value="([^"]*)"/u);
+    expect(row?.[1]).toBe('');
+    expect(mainSection(markup)).not.toContain('MQIS-8891');
+  });
+
+  it('shows the number once in the form and not again in the raw dump', () => {
+    const markup = render();
+
+    // The header line and the labelled field are the same derived value, so they can never
+    // disagree; the raw list omits it rather than showing a third copy nobody labelled.
+    expect(mainSection(markup).split('MQIS-12').length - 1).toBe(1);
+    expect(sourceBlock(markup)).not.toContain('MQIS-12');
+    expect(markup).toContain('never edited');
+  });
+
+  it('still keys the header on the record id when there is no number at all', () => {
+    const markup = render({ mgmtNo: '' });
+
+    expect(markup).toContain('#7');
   });
 });

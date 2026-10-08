@@ -126,7 +126,9 @@ const messages = {
     statusField: 'Status',
     dueDateField: 'Effective deadline',
     completedDateField: 'Completed date',
-    mqisCodeField: 'MQIS code',
+    mgmtNoField: 'Management Number (MQIS)',
+    mgmtNoLockedHelp:
+      'This is the number the import matches records on, so it is shown here and never edited. Changing it would leave the record unmatched and the next import would add it a second time.',
     picField: 'Person in charge (PIC)',
     remarkField: 'Remark / Notes',
     caFileField: 'Corrective action file link',
@@ -476,7 +478,9 @@ const messages = {
     statusField: 'Status',
     dueDateField: 'Deadline hiệu lực',
     completedDateField: 'Ngày hoàn tất',
-    mqisCodeField: 'MQIS code',
+    mgmtNoField: 'Số quản lý (MQIS)',
+    mgmtNoLockedHelp:
+      'Đây là mã dùng để khớp bản ghi khi nhập dữ liệu, nên màn hình chỉ hiển thị chứ không cho sửa. Nếu đổi mã này, lần nhập tiếp theo sẽ không khớp và bản ghi bị tạo thêm một lần nữa.',
     picField: 'Người phụ trách (PIC)',
     remarkField: 'Remark / Ghi chú',
     caFileField: 'Link file hành động khắc phục',
@@ -826,7 +830,9 @@ const messages = {
     statusField: '상태',
     dueDateField: '유효 기한',
     completedDateField: '완료일',
-    mqisCodeField: 'MQIS 코드',
+    mgmtNoField: '관리번호(MQIS)',
+    mgmtNoLockedHelp:
+      '이 번호는 가져오기 때 기록을 일치시키는 기준이므로 보기만 가능하고 수정할 수 없습니다. 바꾸면 다음 가져오기에서 일치하지 않아 기록이 중복 생성됩니다.',
     picField: '담당자 (PIC)',
     remarkField: '비고 / 메모',
     caFileField: '시정 조치 파일 링크',
