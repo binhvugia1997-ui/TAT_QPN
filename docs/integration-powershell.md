@@ -48,7 +48,7 @@ git rev-list --count $myWork
 git log -1 --format='%s' "origin/$src"
 ```
 
-**Kỳ vọng (tính tới commit `1025912` + các commit sửa folder/runbook):** 8 commit, theo đúng thứ tự
+**Kỳ vọng, đo tại `1f75707`:** `7` commit, theo đúng thứ tự
 
 ```
 Add the manual condition column, natural sorting and resizable record columns
@@ -57,11 +57,12 @@ Point the drawer's MQIS field at mgmtNo and lock it
 Lock the Management Number against edits at the service and API layer
 Stop the publish when a gate fails, and guard the spaced path end to end
 Add the Windows acceptance runbook and the branch integration runbook
-(+ các commit sửa tên folder / tài liệu hướng dẫn PowerShell nếu có)
+Point the publish script at the folder the packager creates, and add the PowerShell runbook
 ```
 
-Số commit có thể nhiều hơn nếu tôi còn gửi tiếp — điều cần chắc chắn là **dải `$myWork` bao trọn** và
-**không có commit nào ngoài dải đó**. Đối chiếu với bảng §2 của runbook trước khi sang khối 3.
+Số commit sẽ nhiều hơn nếu branch nguồn còn được push tiếp — đó là lý do khối này dùng dải `$myWork` thay
+vì đánh số SHA tay. Điều phải chắc chắn là **dải bao trọn công việc** và **không có commit ngoài dải**.
+Đối chiếu danh sách in ra với bảng §2 của `docs/integration-runbook.md` rồi mới sang khối 3.
 
 ## 3. Tạo nhánh thử từ đúng tip branch build
 
@@ -129,7 +130,8 @@ npm audit --audit-level=high
 
 **Kỳ vọng:** mọi lệnh exit 0. Trên cây không có workbook, `npm test` báo
 `2 skipped` (đúng quy ước `existsSync(workbook) ? it : it.skip`) — đó là **kết quả đạt**, không phải lỗi.
-Số test cụ thể đo tại commit tích hợp cuối ghi ở `docs/integration-runbook.md` §5.
+Đo trên nhánh thử ở `1f75707`: `52 passed | 1 skipped`, `681 passed | 2 skipped`, và
+`tests/portable` + `tests/update` = 211 passed. Con số của branch nguồn (có workbook) là 683.
 
 ## 7. Line endings của hai file .bat (ngắn nhưng bắt buộc)
 

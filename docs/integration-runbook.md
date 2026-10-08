@@ -72,11 +72,16 @@ dữ liệu, không phải kỹ thuật. Chủ ý của owner là **không** đ�
 
 | Bước | Kết quả |
 |---|---|
-| `git cherry-pick e77d83f..1025912` | áp sạch, **0 conflict**, không file nào bị `kept` |
-| `git diff --stat HEAD 1025912` | chênh lệch = **đúng 3 file artifacts**; không thiếu một dòng code/test/docs |
-| `npx vitest run` trên cây đó | `52 passed \| 1 skipped`, `680 passed \| 2 skipped`, **0 fail** |
-| `tsc --noEmit`, `vite build` | sạch, ok |
-| `tests/update` + `tests/portable` | 210 passed |
+| `git rev-list --count e77d83f..1f75707` | **7 commit**, đúng chủ đề ở bảng §2 |
+| `git cherry-pick e77d83f..origin/arena/44b4109e-tat-qpn` | áp sạch, **0 conflict**, không file nào bị `kept`/`dropped` |
+| `git diff --name-only origin/arena/44b4109e-tat-qpn HEAD` | chênh lệch = **đúng 3 file artifacts**, không thiếu một dòng code/test/docs |
+| `git ls-files \| grep -E '\\.xlsx$\|_Source\.zip$'` trên nhánh thử | **rỗng** ✓ branch build không nhận workbook |
+| `npx vitest run` trên cây đó | `52 passed \| 1 skipped`, `681 passed \| 2 skipped`, **0 fail** |
+| `tsc --noEmit` | sạch |
+| `tests/portable` + `tests/update` | 211 passed |
+| `git ls-files --eol` 2 file `.bat` | `i/lf w/crlf attr/text eol=crlf` ✓ |
+| `git merge --ff-only <nhánh thử>` từ branch build | `Updating 7f26492..ca7ddd9` + `Fast-forward` ✓ |
+| `git check-ref-format 'integration\\tat'` | **INVALID** ✓ (là lý do hướng dẫn PowerShell dùng `/`) |
 | `git ls-files --eol BUILD_AND_PUBLISH_TNP_TEST.bat` | `i/lf w/crlf attr/text eol=crlf` ✓ CRLF lúc checkout |
 
 2 test nhảy qua là `src/services/import/tnpFileParser.test.ts` và
