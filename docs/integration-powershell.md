@@ -48,7 +48,8 @@ git rev-list --count $myWork
 git log -1 --format='%s' "origin/$src"
 ```
 
-**Kỳ vọng, đo tại `1f75707`:** `7` commit, theo đúng thứ tự
+**Kỳ vọng:** danh sách commit của branch nguồn, tính từ `e77d83f`. Đo tại `1f75707` là `7` commit
+(mỗi commit gửi thêm sẽ tăng số này — vì vậy khối này in ra để đối chiếu, không để nhớ):
 
 ```
 Add the manual condition column, natural sorting and resizable record columns

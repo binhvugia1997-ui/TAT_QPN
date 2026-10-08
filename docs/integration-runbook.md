@@ -21,7 +21,8 @@ d5a2ca4  Records UI: cột "Tình trạng thủ công", sắp xếp tự nhiên,
 b5185c3  MQIS → mgmtNo trong Drawer
 854b1bc  Khoá mgmtNo ở tầng service/API
 a1b36c1  Sửa 3 lỗi script publish Windows + checklist Windows
-<mới>    Sửa tên folder portable + runbook này + hướng dẫn PowerShell   ← HEAD
+  …      Sửa tên folder portable, runbook này, hướng dẫn PowerShell, và các commit số liệu sau đó
+         HEAD thực tế: `git rev-parse --short origin/arena/44b4109e-tat-qpn` — đừng chép tay
 ```
 
 Nền tảng của toàn bộ kế hoạch: **tip branch build (`7f26492`) là tổ tiên trực tiếp của HEAD**
@@ -72,7 +73,7 @@ dữ liệu, không phải kỹ thuật. Chủ ý của owner là **không** đ�
 
 | Bước | Kết quả |
 |---|---|
-| `git rev-list --count e77d83f..1f75707` | **7 commit**, đúng chủ đề ở bảng §2 |
+| `git rev-list --count e77d83f..1f75707` | 7 commit tại thời điểm đo — con số này **tăng theo mỗi commit** gửi lên branch nguồn, nên hãy tự chạy lại lệnh đó thay vì tin vào số trong tài liệu |
 | `git cherry-pick e77d83f..origin/arena/44b4109e-tat-qpn` | áp sạch, **0 conflict**, không file nào bị `kept`/`dropped` |
 | `git diff --name-only origin/arena/44b4109e-tat-qpn HEAD` | chênh lệch = **đúng 3 file artifacts**, không thiếu một dòng code/test/docs |
 | `git ls-files \| grep -E '\\.xlsx$\|_Source\.zip$'` trên nhánh thử | **rỗng** ✓ branch build không nhận workbook |
