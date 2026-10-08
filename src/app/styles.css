@@ -198,6 +198,33 @@ button:disabled { cursor: not-allowed; opacity: .62; }
    <colgroup> and the inline min-width), so hiding a column lets the rest use the space.
    `.table-scroll` keeps the horizontal scrollbar, so nothing is crushed to unreadability. */
 .records-table { width: 100%; border-collapse: separate; border-spacing: 0; table-layout: fixed; }
+
+/*
+ * Responsive sizing. Under `table-layout: fixed` a px <col> total smaller than the table is
+ * ignored and the leftover space is dropped after the last column, so the generated colgroup
+ * carries percentages instead: the columns keep their approved proportions as the window grows,
+ * the inline min-width (the natural px total) is the floor, and below that floor `.table-scroll`
+ * scrolls horizontally with the same proportions. Manually dragged widths flow through the same
+ * percentages, so a resized column keeps its share of the window at any width.
+ */
+.records-table-responsive { --records-resize-handle: 7px; }
+.records-table-responsive th.resizable-header { position: relative; padding-right: 16px; }
+.records-table-responsive th.resizable-header:last-child { padding-right: 9px; }
+
+/* The divider itself: a thin grip that widens on hover, drag and keyboard focus. */
+.column-resize-handle { position: absolute; z-index: 2; top: 6px; right: 2px; width: var(--records-resize-handle, 7px); height: calc(100% - 12px); border: 0; border-radius: 3px; background: transparent; cursor: col-resize; touch-action: none; }
+.column-resize-handle::after { content: ""; position: absolute; inset: 0 3px; border-radius: 2px; background: transparent; transition: background .1s ease; }
+.column-resize-handle:hover::after, .column-resize-handle:focus-visible::after { background: #c9d3c9; }
+.column-resize-handle.column-resize-active::after { background: var(--orange); }
+.column-resize-handle:focus-visible { outline: 2px solid var(--orange); outline-offset: 1px; }
+/* While dragging, the pointer may leave the handle; keep the cursor and block text selection. */
+.column-resize-active { cursor: col-resize; }
+.records-table-panel:has(.column-resize-active) { user-select: none; }
+
+/* While a divider drag is in flight the table must not re-flow rows on every pixel: the
+   browser paints the colgroup change and the rows follow at the next frame. */
+.records-table-responsive th { min-width: 0; }
+.records-table-responsive td { min-width: 0; }
 .records-table th { position: sticky; top: 0; z-index: 1; padding: 10px 9px; color: #778278; background: #f8f9f6; border-bottom: 1px solid #e6e9e2; font-size: 9px; font-weight: 750; letter-spacing: .045em; text-align: left; text-transform: uppercase; white-space: nowrap; }
 .table-sort-button { display: inline-flex; align-items: center; gap: 5px; padding: 0; color: inherit; background: transparent; border: 0; font: inherit; letter-spacing: inherit; text-align: left; text-transform: inherit; white-space: nowrap; cursor: pointer; }
 .table-sort-button:hover { color: #34473a; }
@@ -222,7 +249,10 @@ button:disabled { cursor: not-allowed; opacity: .62; }
 .row-sequence-cell { color: #98a298; font-variant-numeric: tabular-nums; text-align: right; }
 .mqis-cell { color: #24362a; font-weight: 650; }
 .title-cell, .occur-place-cell, .part-group-cell, .defect-name-cell { color: #3d4a40; }
-.condition-cell { color: #a5ada4; }
+/* Tình trạng is now an app-managed editable value, so it uses data-ink; the em dash
+   placeholder it shows when nothing has been entered keeps the muted treatment. */
+.condition-cell { color: #3d4a40; }
+.records-table td.condition-cell .inline-edit-trigger { max-width: 100%; }
 /* Ngày Pending renders empty (not 0, not an em dash) when the window no longer applies. */
 .pending-cell { color: #465249; font-variant-numeric: tabular-nums; font-weight: 650; }
 .pending-cell.pending-blank { color: transparent; }

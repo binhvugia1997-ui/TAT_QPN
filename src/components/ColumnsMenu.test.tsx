@@ -19,6 +19,18 @@ function render(visible: ReadonlySet<RecordsTableColumnKey> = DEFAULT_VISIBLE_CO
   );
 }
 
+function renderWithWidths(visible: ReadonlySet<RecordsTableColumnKey> = DEFAULT_VISIBLE_COLUMNS): string {
+  return renderToStaticMarkup(
+    <ColumnsMenu
+      locale="en"
+      columns={SELECTABLE_RECORDS_COLUMNS}
+      visible={visible}
+      onChange={() => {}}
+      onResetWidths={() => {}}
+    />,
+  );
+}
+
 function checkboxes(markup: string): { checked: boolean; disabled: boolean; label: string }[] {
   return (markup.match(/<label class="columns-menu-item"[\s\S]*?<\/label>/gu) ?? []).map((item) => ({
     checked: /checked=""/u.test(item),
@@ -26,6 +38,29 @@ function checkboxes(markup: string): { checked: boolean; disabled: boolean; labe
     label: (/<span>([\s\S]*?)<\/span>/u.exec(item)?.[1] ?? '').trim(),
   }));
 }
+
+/**
+ * Resizing is offered from the same popover that controls visibility, so one control owns the
+ * table layout. The width preference is separate, which is what makes hiding a column safe.
+ */
+describe('column width controls inside the Columns popover', () => {
+  it('offers a reset for widths only when the host workspace supports manual widths', () => {
+    expect(render()).not.toContain('Reset column widths');
+    expect(renderWithWidths()).toContain('Reset column widths');
+  });
+
+  it('puts the width reset beside the visibility reset, not in a second control', () => {
+    const actions = /<div class="columns-menu-actions">([\s\S]*?)<\/div>/u.exec(renderWithWidths())?.[1] ?? '';
+    const labels = (actions.match(/<button[^>]*>([\s\S]*?)<\/button>/gu) ?? []).map((b) => b.replace(/<[^>]*>/gu, '').trim());
+
+    expect(labels).toEqual(['Select all', 'Reset default', 'Reset column widths']);
+  });
+
+  it('keeps the column checkbox list untouched by the width control', () => {
+    expect(checkboxes(renderWithWidths()).map(({ label }) => label))
+      .toEqual(checkboxes(render()).map(({ label }) => label));
+  });
+});
 
 describe('Columns control', () => {
   it('is labelled "Columns" and sits with the other filter controls', () => {

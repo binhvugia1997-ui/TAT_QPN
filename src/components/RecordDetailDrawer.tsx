@@ -3,6 +3,7 @@ import type { Locale } from '../i18n';
 import { translate } from '../i18n';
 import type { DefectRecord } from '../models/defect-record';
 import { LEGACY_STATUS_VALUES } from '../business/status/status';
+import { MANUAL_INLINE_FIELDS, isManualInlineField } from '../business/records/recordsTable';
 import { recordService, serverApi } from '../app/services';
 import { RecordConflictError } from '../services/server/apiClient';
 import { getDesktopBridge } from '../services/desktop/desktopBridge';
@@ -128,9 +129,23 @@ export default function RecordDetailDrawer({ locale, record, onClose, onSaved }:
     };
   }, []);
 
+  // "Source data" means *what the import brought in*. The two manual columns are excluded for the
+  // same reason `recordSource` and `version` are: they are this app's own bookkeeping, and showing
+  // an operator's inline edit among the imported fields implies a provenance the value does not
+  // have — the reader cannot tell a typed defect name from one that arrived in the spreadsheet.
   const sourceFields = useMemo(() => Object.entries(current)
-    .filter(([key]) => !EDITABLE_FIELDS.has(key) && key !== 'recordSource' && key !== 'version')
+    .filter(([key]) => !EDITABLE_FIELDS.has(key)
+      && key !== 'recordSource'
+      && key !== 'version'
+      && !isManualInlineField(key))
     .sort(([left], [right]) => left.localeCompare(right)), [current]);
+
+  // The two inline columns are edited in the table, so the drawer only reports them — and reports
+  // them here rather than in the source list above, because where a value is shown is what tells the
+  // reader whether it came from the import or from a keyboard on this PC.
+  const manualFields = useMemo(() => MANUAL_INLINE_FIELDS
+    .map((field) => [field, current[field] ?? ''] as const)
+    .filter(([, value]) => String(value).trim() !== ''), [current]);
 
   const update = (field: keyof EditableFields, value: string) => {
     setForm((currentForm) => ({ ...currentForm, [field]: value }));
@@ -384,6 +399,21 @@ export default function RecordDetailDrawer({ locale, record, onClose, onSaved }:
             )}
             <small>{translate(locale, 'reportHelp')}</small>
           </section>
+
+          {manualFields.length > 0 && (
+            <section className="manual-entry-section">
+              <h3>{translate(locale, 'manualEntriesTitle')}</h3>
+              <dl className="source-field-list">
+                {manualFields.map(([key, value]) => (
+                  <div className="source-field-row" key={key}>
+                    <dt>{fieldLabel(key)}</dt>
+                    <dd>{displayValue(value)}</dd>
+                  </div>
+                ))}
+              </dl>
+              <small>{translate(locale, 'manualEntriesHelp')}</small>
+            </section>
+          )}
 
           <details className="source-details">
             <summary>{translate(locale, 'sourceData')} · {sourceFields.length}</summary>

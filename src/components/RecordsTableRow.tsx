@@ -45,6 +45,12 @@ interface RecordsTableRowProps {
    * Rejecting leaves the previous value on screen and the reason is shown in the cell.
    */
   onSaveDefectName: (record: DefectRecord, next: string) => Promise<void>;
+  /**
+   * Same contract as `onSaveDefectName`, for the manual "Tình trạng" field. Optional because
+   * workspaces that do not own the manual field (Corrective, Rejected) keep rendering the
+   * value read-only rather than offering an edit that could not be saved.
+   */
+  onSaveCondition?: (record: DefectRecord, next: string) => Promise<void>;
   /** Called after a QPN attachment change so the row refreshes without a full reload. */
   onReportChanged: () => void;
 }
@@ -63,6 +69,7 @@ export default function RecordsTableRow({
   columns,
   onSelect,
   onSaveDefectName,
+  onSaveCondition,
   onReportChanged,
 }: RecordsTableRowProps) {
   const mqis = cellText(record, 'mqis', today);
@@ -74,6 +81,7 @@ export default function RecordsTableRow({
   const occurPlace = cellText(record, 'occurPlace', today);
   const partGroup = cellText(record, 'partGroup', today);
   const defectName = cellText(record, 'defectName', today);
+  const condition = cellText(record, 'condition', today);
   const tatDeadline = cellText(record, 'tatSystem', today);
   const pendingDays = getRecordCellSource(record, 'pendingDays', today);
   const report = findAttachedReport(record, reportIndex);
@@ -127,8 +135,26 @@ export default function RecordsTableRow({
           />
         </td>
       ))}
-      {/* Tình trạng has no verified source field, so the column spec returns null and this cell is always "—". */}
-      {cell('condition', <td className="condition-cell" key="condition">{cellText(record, 'condition', today) ?? placeholder}</td>)}
+      {/*
+        "Tình trạng" is app-managed, exactly like "Tên lỗi": it reads and writes only
+        `manualCondition`. The canonical Approval column keeps showing the TNP `status`, so
+        entering a condition here cannot move the record between the Active, Completed or
+        Rejected scopes. Without a save handler the cell stays a plain read-only value.
+      */}
+      {cell('condition', (
+        onSaveCondition
+          ? (
+            <td className="condition-cell" key="condition" data-tnp-row-interactive="">
+              <InlineTextCell
+                value={condition ?? ''}
+                label={translate(locale, 'conditionEditLabel')}
+                placeholder={translate(locale, 'conditionPlaceholder')}
+                onSave={(next) => onSaveCondition(record, next)}
+              />
+            </td>
+          )
+          : <td className="condition-cell" key="condition">{condition ?? placeholder}</td>
+      ))}
       {cell('qpn', (
         <td className="qpn-cell" key="qpn" data-tnp-row-interactive="">
           <QpnCell locale={locale} record={record} report={report} onChanged={onReportChanged} />

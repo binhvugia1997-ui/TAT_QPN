@@ -1,4 +1,5 @@
 import type { DefectRecord } from '../../models/defect-record';
+import { naturalTextCompare } from '../../utils/naturalCompare';
 
 export type RecordFilterKey =
   | 'plant'
@@ -119,12 +120,16 @@ export function applyRecordFilters(
     if (query) {
       const haystack = [
         record.mgmtNo,
+        // The MQIS column renders mgmtNo, but the optional mqisCode extension stays
+        // searchable too so a legacy value is not lost from free-text search.
         record.mqisCode,
         record.title,
         record.defectDetails,
         // The "Tên lỗi" column shows the manual value, so a search has to reach it too;
         // the imported source text stays searchable alongside it.
         record.manualDefectName,
+        // Same rule for the "Tình trạng" column: what the table shows must be searchable.
+        record.manualCondition,
         record.partName,
         record.partCode,
         record.model,
@@ -179,6 +184,7 @@ export function sortRecordsByValue<T>(
   records: readonly T[],
   valueOf: (record: T) => unknown,
   direction: SortDirection = 'asc',
+  compareText: (left: string, right: string) => number = naturalTextCompare,
 ): T[] {
   const factor = direction === 'asc' ? 1 : -1;
   return records
@@ -191,9 +197,14 @@ export function sortRecordsByValue<T>(
       if (typeof left.value === 'number' && typeof right.value === 'number') {
         return (left.value - right.value) * factor || left.index - right.index;
       }
-      return String(left.value).localeCompare(String(right.value)) * factor || left.index - right.index;
+      return compareText(String(left.value), String(right.value)) * factor || left.index - right.index;
     })
     .map(({ record }) => record);
+}
+
+/** Plain lexicographic comparison — the historical behavior, kept for non-code columns. */
+export function lexicographicTextCompare(left: string, right: string): number {
+  return left.localeCompare(right);
 }
 
 export function sortRecords<K extends keyof DefectRecord>(

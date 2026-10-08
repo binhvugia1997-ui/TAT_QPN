@@ -32,6 +32,11 @@ interface RenderOptions {
   reportIndex?: ReturnType<typeof createReportIndex>;
   mode?: 'records' | 'corrective';
   columns?: RecordsTableColumnKey[];
+  /**
+   * `undefined` keeps the workspace behaviour (the cell is editable); an explicit `null`
+   * renders the read-only form, as the Corrective and Rejected workspaces do.
+   */
+  onSaveCondition?: ((record: DefectRecord, next: string) => Promise<void>) | null;
 }
 
 function renderRow(overrides: Partial<DefectRecord> = {}, options: RenderOptions = {}): string {
@@ -46,6 +51,7 @@ function renderRow(overrides: Partial<DefectRecord> = {}, options: RenderOptions
       columns={options.columns ?? ALL_COLUMNS}
       onSelect={() => {}}
       onSaveDefectName={async () => {}}
+      onSaveCondition={options.onSaveCondition === null ? undefined : options.onSaveCondition ?? (async () => {})}
       onReportChanged={() => {}}
     />,
   );
@@ -70,7 +76,7 @@ describe('Records table row rendering', () => {
   it('renders exactly the 14 approved cells, in the approved order', () => {
     expect(cells(renderRow())).toEqual([
       '1',                          // NO — rendered row sequence only
-      'MQIS-8891',                  // MQIS
+      'TNP-0007',                   // MQIS — the canonical Management Number, not mqisCode
       '01 Oct 2026',                // Registered Date
       'Nguyen Van A',               // PIC
       'Đợi đối sách',               // Approval — original TNP status
@@ -79,7 +85,7 @@ describe('Records table row rendering', () => {
       'Line 3',                     // Occur place
       'Welding',                    // Công đoạn quy trách
       'Click to enter the defect name', // Tên lỗi — manual, blank until entered
-      '—',                          // Tình trạng — no verified source field
+      'Click to enter the condition',   // Tình trạng — manual, blank until entered
       '＋ Add',                     // QPN — nothing attached yet
       '15 Oct 2026TNP deadline',    // TAT Hệ thống
       '-3',                         // Ngày Pending
@@ -101,10 +107,29 @@ describe('Records table row rendering', () => {
     expect(withoutDeadline[13]).toBe('-3');
   });
 
-  it('always shows the placeholder for Tình trạng, even when other fields are filled in', () => {
-    const filled = cells(renderRow({ notes: 'OK', completedDate: '2026-10-09' }));
+  it('prompts for a manual Tình trạng instead of borrowing the status or any other field', () => {
+    const filled = cells(renderRow({ notes: 'OK', completedDate: '2026-10-09', status: 'Hoàn thành' }));
 
-    expect(filled[10]).toBe('—');
+    // The Approval column shows the canonical status; Tình trạng stays blank until typed.
+    expect(filled[10]).toBe('Click to enter the condition');
+    expect(filled[4]).toBe('Hoàn thành');
+  });
+
+  it('shows an entered manual condition, and keeps MQIS and Approval on their own sources', () => {
+    const filled = cells(renderRow({ manualCondition: 'Đang khắc phục' }));
+
+    expect(filled[10]).toBe('Đang khắc phục');
+    expect(filled[1]).toBe('TNP-0007');   // MQIS
+    expect(filled[4]).toBe('Đợi đối sách'); // Approval
+  });
+
+  it('renders Tình trạng read-only when the workspace has no manual save handler', () => {
+    const markup = renderRow({ manualCondition: 'Đang khắc phục' }, { onSaveCondition: null });
+    const conditionCell = /<td class="condition-cell"[\s\S]*?<\/td>/u.exec(markup)?.[0] ?? '';
+
+    expect(conditionCell).not.toContain('inline-edit-trigger');
+    expect(conditionCell).toContain('Đang khắc phục');
+    expect(cells(markup)[10]).toBe('Đang khắc phục');
   });
 
   it('renders Ngày Pending blank — not 0, not an em dash — for a no-longer-active status', () => {
@@ -128,7 +153,7 @@ describe('Records table row rendering', () => {
 
   it('shows placeholders rather than empty cells for missing source values', () => {
     const blank = cells(renderRow({
-      mqisCode: null,
+      mgmtNo: '',
       pic: null,
       plant: null,
       title: null,
@@ -220,7 +245,7 @@ describe('column visibility in the row', () => {
       'Line 3',
       'Welding',
       'Click to enter the defect name',
-      '—',
+      'Click to enter the condition',
       '＋ Add',
       '15 Oct 2026TNP deadline',
       '-3',
@@ -240,6 +265,8 @@ describe('column visibility in the row', () => {
     renderRow({}, { columns: ['no', 'title', 'qpn'] });
 
     expect(JSON.stringify(source)).toBe(before);
+    // Rendering the MQIS column from mgmtNo must stay a read: no field is rewritten.
+    expect(source.mgmtNo).toBe('TNP-0007');
     expect(source.mqisCode).toBe('MQIS-8891');
     expect(source.plant).toBe('TNP');
     expect(source.registeredDate).toBe('2026-10-01');
@@ -268,8 +295,10 @@ describe('the editable "Tên lỗi" cell', () => {
     const markup = renderRow({ manualDefectName: 'Weld crack on bracket' });
 
     expect(markup).toContain('Weld crack on bracket');
-    expect(markup).not.toContain('inline-edit-empty');
-    expect(markup).not.toContain('Click to enter the defect name');
+    // Scoped to the Tên lỗi cell: the neighbouring Tình trạng cell has its own empty prompt.
+    const defectCell = /<td class="defect-name-cell"[\s\S]*?<\/td>/u.exec(markup)?.[0] ?? '';
+    expect(defectCell).not.toContain('inline-edit-empty');
+    expect(defectCell).not.toContain('Click to enter the defect name');
   });
 
   it('treats a whitespace-only value as still blank', () => {
@@ -287,5 +316,36 @@ describe('the editable "Tên lỗi" cell', () => {
   it('does not render the row as a single-click target', () => {
     // React attaches these as listeners, not attributes, so the guard is the DOM-level check.
     expect(renderRow()).not.toMatch(/<tr[^>]*\sonclick=/u);
+  });
+});
+
+describe('the editable "Tình trạng" cell', () => {
+  it('is editable inline, exactly like "Tên lỗi"', () => {
+    const conditionCell = /<td class="condition-cell"[\s\S]*?<\/td>/u.exec(renderRow())?.[0] ?? '';
+
+    expect(conditionCell).toContain('class="inline-edit-trigger inline-edit-empty"');
+    expect(conditionCell).toContain('aria-label="Condition (manual entry)"');
+    expect(conditionCell).toContain('Click to enter the condition');
+  });
+
+  it('marks the cell interactive so a double-click edits rather than opening the drawer', () => {
+    expect(renderRow()).toMatch(/<td[^>]*class="condition-cell"[^>]*data-tnp-row-interactive/u);
+  });
+
+  it('shows the saved manual value once one exists', () => {
+    const markup = renderRow({ manualCondition: 'Đã khắc phục xong' });
+    const conditionCell = /<td class="condition-cell"[\s\S]*?<\/td>/u.exec(markup)?.[0] ?? '';
+
+    expect(conditionCell).toContain('Đã khắc phục xong');
+    expect(conditionCell).not.toContain('inline-edit-empty');
+  });
+
+  it('keeps the two manual cells independent of each other', () => {
+    const markup = renderRow({ manualDefectName: 'Only the name', manualCondition: 'Only the condition' });
+
+    expect(/<td class="defect-name-cell"[\s\S]*?<\/td>/u.exec(markup)?.[0]).toContain('Only the name');
+    expect(/<td class="defect-name-cell"[\s\S]*?<\/td>/u.exec(markup)?.[0]).not.toContain('Only the condition');
+    expect(/<td class="condition-cell"[\s\S]*?<\/td>/u.exec(markup)?.[0]).toContain('Only the condition');
+    expect(/<td class="condition-cell"[\s\S]*?<\/td>/u.exec(markup)?.[0]).not.toContain('Only the name');
   });
 });

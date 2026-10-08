@@ -35,6 +35,17 @@ export interface DefectRecord {
    * of the existing-record import whitelist, so an Excel re-import can never overwrite it.
    */
   manualDefectName?: NullableString;
+  /**
+   * App-managed "Tình trạng" shown and edited in the Records table.
+   *
+   * Deliberately separate from the canonical `status`, which is the TNP Approval value and
+   * drives the Completed and Rejected scopes, TAT and import synchronisation. Editing this
+   * field cannot move a record between those views. It is not produced by the header mapping
+   * and is not part of the existing-record import whitelist, so an Excel re-import can never
+   * overwrite it. No database column is added for it: like every app-managed value it lives
+   * inside the record payload.
+   */
+  manualCondition?: NullableString;
   sampleQty?: number | null;
   defectQty?: number | null;
   defectRate?: number | null;
@@ -111,6 +122,7 @@ const STRING_FIELDS = new Set([
   'model',
   'defectDetails',
   'manualDefectName',
+  'manualCondition',
   'reason1',
   'reason2',
   'inspector',

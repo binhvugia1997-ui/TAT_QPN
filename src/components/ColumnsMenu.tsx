@@ -14,14 +14,23 @@ interface ColumnsMenuProps {
   columns: readonly RecordsTableColumn[];
   visible: ReadonlySet<RecordsTableColumnKey>;
   onChange: (next: ReadonlySet<RecordsTableColumnKey>) => void;
+  /**
+   * Offers "reset column widths" inside the same popover that controls visibility, so one
+   * control owns the table layout. Omitted where the workspace has no resizable widths.
+   */
+  onResetWidths?: () => void;
 }
 
 /**
  * Compact "Columns" popover next to the Record filters. Purely a display toggle over the
  * approved Records columns — it never touches record data, filtering, sorting or TAT.
  * Protected columns stay checked and disabled so the table cannot be emptied.
+ *
+ * Widths are handled here too rather than in a second control: a column that is hidden keeps its
+ * manual width (visibility and width are separate preferences), and "Reset column widths" clears
+ * every manual width at once instead of forcing the operator to find each divider.
  */
-export default function ColumnsMenu({ locale, columns, visible, onChange }: ColumnsMenuProps) {
+export default function ColumnsMenu({ locale, columns, visible, onChange, onResetWidths }: ColumnsMenuProps) {
   return (
     <details className="more-filters columns-control">
       <summary>{translate(locale, 'columnsControl')}</summary>
@@ -39,6 +48,11 @@ export default function ColumnsMenu({ locale, columns, visible, onChange }: Colu
           >
             {translate(locale, 'columnsReset')}
           </button>
+          {onResetWidths && (
+            <button type="button" onClick={onResetWidths}>
+              {translate(locale, 'columnsResetWidths')}
+            </button>
+          )}
         </div>
         <div className="columns-menu-list">
           {columns.map(({ key, label }) => {

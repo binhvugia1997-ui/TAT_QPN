@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { DefectRecord } from '../../models/defect-record';
-import { applyRecordFilters, buildRecordsHref, createEmptyFilters, EMPTY_FILTER_QUERY_VALUE, getFilterOptions, parseRecordFilters, sortRecords, sortRecordsByValue, toggleColumnSort, writeRecordFilters } from './filters';
+import { applyRecordFilters, buildRecordsHref, createEmptyFilters, EMPTY_FILTER_QUERY_VALUE, getFilterOptions, lexicographicTextCompare, parseRecordFilters, sortRecords, sortRecordsByValue, toggleColumnSort, writeRecordFilters } from './filters';
 
 const row = (id: number, overrides: Partial<DefectRecord> = {}): DefectRecord => ({
   id,
@@ -129,5 +129,89 @@ describe('record filters and sorting', () => {
     ]);
     expect(options.plant).toEqual(['SEV', 'SEVT']);
     expect(options.month).toEqual(['2026-10', '2026-09']);
+  });
+});
+
+/**
+ * The MQIS column shows the canonical Management Number, so the shared search and the column
+ * sort have to follow the same source the cell renders. Both must keep working after the fix,
+ * and the optional `mqisCode` extension must stay searchable so no legacy value is lost.
+ */
+describe('searching and sorting the MQIS column', () => {
+  it('finds a record by the management number shown in the MQIS column', () => {
+    const records = [
+      row(1, { mgmtNo: '260702006-VOC' }),
+      row(2, { mgmtNo: '260702007-VOC' }),
+    ];
+
+    expect(applyRecordFilters(records, { ...createEmptyFilters(), search: '260702006' }).map((r) => r.id)).toEqual([1]);
+    expect(applyRecordFilters(records, { ...createEmptyFilters(), search: '260702006' }).map((r) => r.id)).not.toContain(2);
+  });
+
+  it('finds a record that only carries the mqisCode extension, as well', () => {
+    const records = [
+      row(1, { mgmtNo: 'M-1', mqisCode: 'MQIS-8891' }),
+      row(2, { mgmtNo: 'M-2' }),
+    ];
+
+    expect(applyRecordFilters(records, { ...createEmptyFilters(), search: 'mqis-8891' }).map((r) => r.id)).toEqual([1]);
+  });
+
+  it('preserves leading zeros when matching, so a padded number is found exactly as stored', () => {
+    const records = [row(1, { mgmtNo: '0007' }), row(2, { mgmtNo: '7' })];
+
+    expect(applyRecordFilters(records, { ...createEmptyFilters(), search: '0007' }).map((r) => r.id)).toEqual([1]);
+  });
+
+  it('sorts the MQIS column on the same value the cell displays', () => {
+    const records = [
+      row(1, { mgmtNo: 'MQIS-10' }),
+      row(2, { mgmtNo: 'MQIS-2' }),
+      row(3, { mgmtNo: 'MQIS-1' }),
+    ];
+
+    // Ascending by displayed text, with digit runs ordered numerically rather than by glyph.
+    const ascending = sortRecordsByValue(records, (record) => record.mgmtNo, 'asc');
+    expect(ascending.map((record) => record.mgmtNo)).toEqual(['MQIS-1', 'MQIS-2', 'MQIS-10']);
+    expect(sortRecordsByValue(records, (record) => record.mgmtNo, 'desc').map((record) => record.mgmtNo))
+      .toEqual(['MQIS-10', 'MQIS-2', 'MQIS-1']);
+  });
+
+  it('still sorts blanks last, whichever direction is chosen', () => {
+    const records = [
+      row(1, { mgmtNo: 'B' }),
+      row(2, { mgmtNo: '' }),
+      row(3, { mgmtNo: 'A' }),
+    ];
+
+    expect(sortRecordsByValue(records, (record) => record.mgmtNo, 'asc').map((r) => r.id)).toEqual([3, 1, 2]);
+    expect(sortRecordsByValue(records, (record) => record.mgmtNo, 'desc').map((r) => r.id)).toEqual([1, 3, 2]);
+  });
+
+  it('can opt back into plain lexicographic order for prose columns', () => {
+    const records = [row(1, { title: 'item 10' }), row(2, { title: 'item 2' })];
+
+    expect(sortRecordsByValue(records, (r) => r.title, 'asc', lexicographicTextCompare).map((r) => r.id)).toEqual([1, 2]);
+    // The default for the Records table is natural order, i.e. 2 before 10.
+    expect(sortRecordsByValue(records, (r) => r.title, 'asc').map((r) => r.id)).toEqual([2, 1]);
+  });
+});
+
+describe('searching the manual "Tình trạng" column', () => {
+  it('reaches the manual value the column shows', () => {
+    const records = [
+      row(1, { manualCondition: 'Đang khắc phục' }),
+      row(2, { manualCondition: null }),
+    ];
+
+    expect(applyRecordFilters(records, { ...createEmptyFilters(), search: 'đang khắc phục' }).map((r) => r.id)).toEqual([1]);
+  });
+
+  it('does not make the canonical status searchable any differently', () => {
+    const records = [row(1, { manualCondition: 'X', status: 'Rejected (xét)' })];
+
+    // status is not in the free-text haystack; the faceted filter still finds it.
+    expect(applyRecordFilters(records, { ...createEmptyFilters(), search: 'rejected (xét)' }).map((r) => r.id)).toEqual([]);
+    expect(applyRecordFilters(records, { ...createEmptyFilters(), status: new Set(['Rejected (xét)']) }).map((r) => r.id)).toEqual([1]);
   });
 });

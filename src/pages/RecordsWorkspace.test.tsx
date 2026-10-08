@@ -108,7 +108,9 @@ describe('Records workspace table', () => {
 
     expect(first).toEqual([
       '1',
-      '—',
+      // MQIS is the canonical Management Number, so a record without the optional
+      // `mqisCode` extension still shows its number instead of an em dash.
+      'TNP-0002',
       '20 Sept 2026',
       '—',
       'Rejected (xét)',
@@ -117,14 +119,14 @@ describe('Records workspace table', () => {
       '—',
       '—',
       'Click to enter the defect name',
-      '—',
+      'Click to enter the condition',
       '＋ Add',
       '27 Sept 20267-day fallback',
       expect.stringMatching(/^-?\d+$/u),
     ]);
     expect(second).toEqual([
       '2',
-      'MQIS-1',
+      'TNP-0001',
       '01 Oct 2026',
       'Nguyen Van A',
       'Đợi đối sách',
@@ -133,7 +135,7 @@ describe('Records workspace table', () => {
       'Line 3',
       'Welding',
       'Click to enter the defect name',
-      '—',
+      'Click to enter the condition',
       '＋ Add',
       '15 Oct 2026TNP deadline',
       expect.stringMatching(/^-?\d+$/u),
@@ -170,7 +172,13 @@ function withStoredPreference<T>(hidden: readonly string[], run: () => T): T {
 
 function columnWidths(markup: string): string[] {
   return (/<colgroup>[\s\S]*?<\/colgroup>/u.exec(markup)?.[0] ?? '')
-    .match(/width:\s*([\d.]+)px/gu) ?? [];
+    .match(/width:\s*[\d.]+%/gu) ?? [];
+}
+
+/** The declared minimum table width in px — the natural width the table never shrinks below. */
+function tableMinWidth(markup: string): number {
+  const raw = /min-width:\s*(\d+(?:\.\d+)?)px/u.exec(markup)?.[1];
+  return raw === undefined ? Number.NaN : Number(raw);
 }
 
 describe('Records column visibility end to end', () => {
@@ -250,13 +258,24 @@ describe('Records column visibility end to end', () => {
     expect(markup).toContain('class="qpn-action qpn-add"');
   });
 
+  it('keeps the colgroup percentages summing to the whole table', () => {
+    const total = (widths: string[]) => widths.reduce((sum, w) => sum + Number(w.replace(/[^\d.]/gu, '')), 0);
+
+    expect(total(columnWidths(renderPage()))).toBeCloseTo(100, 2);
+    expect(total(columnWidths(withStoredPreference(['mqis', 'plant'], () => renderPage())))).toBeCloseTo(100, 2);
+  });
+
   it('shrinks the table minimum width as columns are hidden', () => {
     const all = columnWidths(renderPage());
     const fewer = columnWidths(withStoredPreference(['mqis', 'plant'], () => renderPage()));
 
     expect(fewer.length).toBeLessThan(all.length);
-    const total = (widths: string[]) => widths.reduce((sum, w) => sum + Number(w.replace(/\D/gu, '')), 0);
-    expect(total(fewer)).toBeLessThan(total(all));
+    // Hiding a column hands its share to the rest rather than leaving a gap.
+    const widest = (widths: string[]) => Math.max(...widths.map((w) => Number(w.replace(/[^\d.]/gu, ''))));
+    expect(widest(fewer)).toBeGreaterThan(widest(all));
+    // The px floor is what makes the table scroll instead of crushing the text.
+    expect(tableMinWidth(withStoredPreference(['mqis', 'plant'], () => renderPage())))
+      .toBeLessThan(tableMinWidth(renderPage()));
     expect(renderPage()).toContain('style="min-width:');
   });
 

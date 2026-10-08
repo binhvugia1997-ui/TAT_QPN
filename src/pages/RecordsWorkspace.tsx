@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { applyRecordFilters, createEmptyFilters, parseRecordFilters, sortRecordsByValue, toggleColumnSort, writeRecordFilters, type ColumnSortState, type RecordFilters } from '../business/filters/filters';
 import { getTatDaysRemaining, sortRecordsByOperationalPriority } from '../business/tat/tat';
@@ -10,7 +10,10 @@ import {
   createReportIndex,
   getRecordCellSource,
   getVisibleRecordsColumns,
+  RECORDS_TABLE_COLUMNS,
+  MANUAL_CONDITION_FIELD,
   MANUAL_DEFECT_NAME_FIELD,
+  type ManualInlineField,
   type RecordsTableSortableColumn,
   type ReportIndex,
 } from '../business/records/recordsTable';
@@ -19,8 +22,22 @@ import {
   SELECTABLE_RECORDS_COLUMNS,
   totalColumnWidth,
 } from '../business/records/columnVisibility';
-import type { RecordsTableColumnKey } from '../business/records/recordsTable';
+import {
+  applyColumnWidths,
+  computeColumnLayout,
+  defaultColumnWidths,
+  measureScrollWidth,
+  resetColumnWidth,
+  type ColumnWidths,
+} from '../business/records/columnWidths';
+import type { RecordsTableColumn, RecordsTableColumnKey } from '../business/records/recordsTable';
 import { loadVisibleColumns, saveVisibleColumns } from '../services/preferences/columnPreferences';
+import {
+  clearColumnWidths,
+  loadColumnWidths,
+  saveColumnWidths,
+} from '../services/preferences/columnWidthPreferences';
+import { RESET_COLUMN_WIDTH_SENTINEL } from '../components/ColumnResizeHandle';
 import { todayDateOnly } from '../utils/date';
 import type { DefectRecord, RecordId } from '../models/defect-record';
 import type { Locale, MessageKey } from '../i18n';
@@ -28,6 +45,7 @@ import { translate } from '../i18n';
 import { serverApi } from '../services/server/serverRecordRepository';
 import { recordService } from '../app/services';
 import ColumnsMenu from '../components/ColumnsMenu';
+import ColumnResizeHandle from '../components/ColumnResizeHandle';
 import RecordDetailDrawer from '../components/RecordDetailDrawer';
 import RecordsTableRow from '../components/RecordsTableRow';
 import TnpImportDialog from '../components/TnpImportDialog';
@@ -45,6 +63,13 @@ interface RecordsWorkspaceProps {
   mode: RecordsWorkspaceMode;
   onRecordsChanged: () => Promise<void>;
 }
+
+/**
+ * The width preference is keyed against every column the table can render — including the
+ * corrective-only CA badge — so a manual width survives hiding and re-showing a column, and an
+ * unknown key in stored data is dropped rather than trusted.
+ */
+const REQUIRED_RECORDS_COLUMNS_FOR_WIDTHS: readonly RecordsTableColumn[] = RECORDS_TABLE_COLUMNS;
 
 const TAT_FILTERS: Array<{ value: TatFilter; label: MessageKey }> = [
   { value: 'all', label: 'tatAll' },
@@ -97,6 +122,57 @@ export default function RecordsWorkspace({ locale, records, mode, onRecordsChang
     saveVisibleColumns(next);
   }, []);
 
+  /**
+   * Manual column widths — also per-client display state, in its own localStorage key so a
+   * damaged width preference cannot affect which columns are shown, and vice versa.
+   */
+  const [columnWidths, setColumnWidths] = useState<ColumnWidths>(
+    () => loadColumnWidths(defaultColumnWidths(REQUIRED_RECORDS_COLUMNS_FOR_WIDTHS)),
+  );
+
+  /** Usable width of the scroll container, for the responsive (stretch) layout. */
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const [availableWidth, setAvailableWidth] = useState<number | null>(null);
+
+  useEffect(() => {
+    const element = scrollRef.current;
+    if (!element) return;
+    const read = () => setAvailableWidth(measureScrollWidth(element.clientWidth, element.scrollWidth));
+    read();
+    // Older hosts have no ResizeObserver; the table then keeps its natural sizing, which is
+    // exactly the pre-existing behaviour rather than a broken layout.
+    if (typeof ResizeObserver !== 'function') return;
+    const observer = new ResizeObserver(read);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+
+  /**
+   * Persists the width preference only when a gesture ends. Writing per pointer-move would hit
+   * localStorage thousands of times per drag for no visual benefit.
+   */
+  const persistWidths = useCallback((next: ColumnWidths) => {
+    saveColumnWidths(next, defaultColumnWidths(REQUIRED_RECORDS_COLUMNS_FOR_WIDTHS));
+  }, []);
+
+  const handleColumnResize = useCallback((key: RecordsTableColumnKey, nextWidth: number) => {
+    setColumnWidths((current) => {
+      if (nextWidth === RESET_COLUMN_WIDTH_SENTINEL) {
+        const cleared = resetColumnWidth(current, key);
+        persistWidths(cleared);
+        return cleared;
+      }
+      const updated = { ...current, [key]: nextWidth };
+      persistWidths(updated);
+      return updated;
+    });
+  }, [persistWidths]);
+
+  const handleResetColumnWidths = useCallback(() => {
+    setColumnWidths({});
+    clearColumnWidths();
+  }, []);
+
   /** Refetches the bulk report index; also used after an inline QPN attachment change. */
   const reloadReportIndex = useCallback(async () => {
     try {
@@ -108,15 +184,29 @@ export default function RecordsWorkspace({ locale, records, mode, onRecordsChang
   }, []);
 
   /**
-   * Inline "Tên lỗi" edit. Goes through the same record update path as the Detail drawer, so
-   * the write gets the server's optimistic-concurrency check and its audit trail rather than a
-   * second persistence route. Only the manual field is patched: the imported `defectDetails`
-   * is left exactly as it was.
+   * Inline edit of an app-managed manual field ("Tên lỗi" and "Tình trạng"). Goes through the
+   * same record update path as the Detail drawer, so the write gets the server's
+   * optimistic-concurrency check and its audit trail rather than a second persistence route.
+   * Only the one manual field is patched: the imported `defectDetails` and the canonical
+   * `status` are left exactly as they were.
    */
-  const saveDefectName = useCallback(async (record: DefectRecord, next: string) => {
-    await recordService.updateRecord(record.id, { [MANUAL_DEFECT_NAME_FIELD]: next || null });
+  const saveManualField = useCallback(async (
+    record: DefectRecord,
+    field: ManualInlineField,
+    next: string,
+  ) => {
+    await recordService.updateRecord(record.id, { [field]: next || null });
     await onRecordsChanged();
   }, [onRecordsChanged]);
+
+  const saveDefectName = useCallback(
+    (record: DefectRecord, next: string) => saveManualField(record, MANUAL_DEFECT_NAME_FIELD, next),
+    [saveManualField],
+  );
+  const saveCondition = useCallback(
+    (record: DefectRecord, next: string) => saveManualField(record, MANUAL_CONDITION_FIELD, next),
+    [saveManualField],
+  );
 
   /**
    * The QPN column links straight to a record's managed report, so the bulk index is
@@ -241,12 +331,23 @@ export default function RecordsWorkspace({ locale, records, mode, onRecordsChang
     ? [`${translate(locale, 'tatFilter')}: ${translate(locale, TAT_FILTERS.find(({ value }) => value === tatFilter)!.label)}`]
     : [];
   /** Columns actually rendered: the mode's columns, minus whichever the user hid. */
-  const tableColumns = useMemo(() => applyColumnVisibility(
+  const specColumns = useMemo(() => applyColumnVisibility(
     getVisibleRecordsColumns({ corrective: mode === 'corrective' }),
     visibleColumns,
   ), [mode, visibleColumns]);
+  /** Manual widths are applied last, so a hidden column keeps its width for when it returns. */
+  const tableColumns = useMemo(
+    () => applyColumnWidths(specColumns, columnWidths),
+    [specColumns, columnWidths],
+  );
   const columnKeys = useMemo(() => tableColumns.map(({ key }) => key), [tableColumns]);
-  const tableMinWidth = totalColumnWidth(tableColumns);
+  /** Kept as the fallback when the container cannot be measured (first paint, no observer). */
+  const naturalTableWidth = totalColumnWidth(tableColumns);
+  const tableLayout = useMemo(
+    () => computeColumnLayout({ columns: tableColumns, availableWidth }),
+    [tableColumns, availableWidth],
+  );
+  const tableMinWidth = tableLayout.minWidth || naturalTableWidth;
 
   return (
     <div className="page records-page">
@@ -355,6 +456,9 @@ export default function RecordsWorkspace({ locale, records, mode, onRecordsChang
           columns={SELECTABLE_RECORDS_COLUMNS}
           visible={visibleColumns}
           onChange={handleVisibleColumnsChange}
+          // Resizing is offered from the same popover that controls visibility, so one control
+          // owns the table layout; widths are restored for every column at once.
+          onResetWidths={handleResetColumnWidths}
         />
       </RecordFiltersPanel>
 
@@ -365,35 +469,57 @@ export default function RecordsWorkspace({ locale, records, mode, onRecordsChang
             <button type="button" className="secondary-button" onClick={clearFilters}>{translate(locale, 'clearAll')}</button>
           </div>
         ) : (
-          <div className="table-scroll">
+          // The ref is the measurement source for the responsive layout: the table stretches its
+          // columns in proportion when the window is wide enough and scrolls below the natural
+          // width, which is what keeps all fourteen approved columns readable.
+          <div className="table-scroll" ref={scrollRef}>
             <table
-              className="records-table"
+              className="records-table records-table-responsive"
               style={{ minWidth: `${tableMinWidth}px` }}
             >
-              {/* Widths come from the visible column set, so hiding a column lets the rest
-                  use the available width instead of leaving a gap or shrinking the text. */}
+              {/*
+                Percentages, not px: under `table-layout: fixed` a px `<col>` total smaller than
+                the table leaves dead space and ignores the window. Percent widths always fill,
+                `min-width` above preserves each column's real floor, and hiding a column hands its
+                share to the rest. Widths come from the visible set, so the mapping cannot drift.
+              */}
               <colgroup>
-                {tableColumns.map(({ key, width }) => <col key={key} style={{ width: `${width}px` }} />)}
+                {tableColumns.map(({ key }) => (
+                  <col key={key} style={{ width: `${tableLayout.percentages[key] ?? 0}%` }} />
+                ))}
               </colgroup>
               <thead><tr>
-                {tableColumns.map(({ key, label, sortable }) => {
-                  if (!sortable) return <th key={key}>{translate(locale, label)}</th>;
+                {tableColumns.map(({ key, label, sortable, width }) => {
+                  const headerLabel = translate(locale, label);
+                  const resize = (
+                    <ColumnResizeHandle
+                      locale={locale}
+                      columnLabel={headerLabel}
+                      width={width}
+                      onResize={(nextWidth) => handleColumnResize(key, nextWidth)}
+                      onResizeEnd={(nextWidth) => handleColumnResize(key, nextWidth)}
+                    />
+                  );
+                  if (!sortable) {
+                    return <th key={key} className="resizable-header">{headerLabel}{resize}</th>;
+                  }
                   const active = manualSort?.column === sortable;
                   const direction = active ? manualSort.direction : null;
                   const ariaSort = direction === 'asc' ? 'ascending' : direction === 'desc' ? 'descending' : 'none';
                   const nextDirection = direction === 'asc' ? 'sortDescending' : 'sortAscending';
                   return (
-                    <th key={key} aria-sort={ariaSort}>
+                    <th key={key} className="resizable-header" aria-sort={ariaSort}>
                       <button
                         type="button"
                         className="table-sort-button"
-                        aria-label={`${translate(locale, label)}: ${translate(locale, nextDirection)}`}
+                        aria-label={`${headerLabel}: ${translate(locale, nextDirection)}`}
                         aria-pressed={active}
                         onClick={() => setManualSort((current) => toggleColumnSort(current, sortable))}
                       >
-                        <span>{translate(locale, label)}</span>
+                        <span>{headerLabel}</span>
                         <span className="table-sort-indicator" aria-hidden="true">{direction === 'asc' ? '↑' : direction === 'desc' ? '↓' : '↕'}</span>
                       </button>
+                      {resize}
                     </th>
                   );
                 })}
@@ -414,6 +540,7 @@ export default function RecordsWorkspace({ locale, records, mode, onRecordsChang
                       columns={columnKeys}
                       onSelect={(selected) => setSelectedId(selected.id)}
                       onSaveDefectName={saveDefectName}
+                      onSaveCondition={saveCondition}
                       onReportChanged={() => {
                         void reloadReportIndex();
                       }}

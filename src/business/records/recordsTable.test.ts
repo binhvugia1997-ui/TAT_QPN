@@ -2,15 +2,22 @@ import { describe, expect, it } from 'vitest';
 import type { DefectRecord } from '../../models/defect-record';
 import { translate } from '../../i18n';
 import {
+  canonicalCodeText,
   createReportIndex,
   findAttachedReport,
   getRecordCellSource,
   getVisibleRecordsColumns,
   hasSourceTatDeadline,
+  isManualInlineField,
+  MANUAL_CONDITION_COLUMN,
+  MANUAL_CONDITION_FIELD,
   MANUAL_DEFECT_NAME_COLUMN,
   MANUAL_DEFECT_NAME_FIELD,
+  MQIS_COLUMN,
+  MQIS_DISPLAY_FIELD,
   REQUIRED_RECORDS_COLUMNS,
 } from './recordsTable';
+import { naturalTextCompare } from '../../utils/naturalCompare';
 
 const today = '2026-10-11';
 
@@ -87,7 +94,7 @@ describe('approved Records table layout', () => {
 
 describe('Records cell mappings', () => {
   it('maps each approved column to its confirmed source field', () => {
-    expect(getRecordCellSource(record(), 'mqis', today)).toBe('MQIS-8891');
+    expect(getRecordCellSource(record(), 'mqis', today)).toBe('TNP-0007');
     expect(getRecordCellSource(record(), 'registeredDate', today)).toBe('2026-10-01');
     expect(getRecordCellSource(record(), 'pic', today)).toBe('Nguyen Van A');
     expect(getRecordCellSource(record(), 'approval', today)).toBe('Đợi đối sách');
@@ -130,9 +137,101 @@ describe('Records cell mappings', () => {
   });
 
   it('shows the placeholder for blank source text instead of an empty cell', () => {
-    expect(getRecordCellSource(record({ mqisCode: '   ' }), 'mqis', today)).toBeNull();
+    expect(getRecordCellSource(record({ mgmtNo: '   ' }), 'mqis', today)).toBeNull();
+    expect(getRecordCellSource(record({ manualCondition: '   ' }), 'condition', today)).toBeNull();
     expect(getRecordCellSource(record({ pic: null }), 'pic', today)).toBeNull();
     expect(getRecordCellSource(record({ registeredDate: null }), 'registeredDate', today)).toBeNull();
+  });
+
+  it('has no source for QPN, so the cell is answered by the report index instead', () => {
+    expect(getRecordCellSource(record(), 'qpn', today)).toBeNull();
+  });
+});
+
+describe('the MQIS column', () => {
+  it('shows the canonical Management Number', () => {
+    expect(MQIS_COLUMN).toBe('mqis');
+    expect(MQIS_DISPLAY_FIELD).toBe('mgmtNo');
+    expect(getRecordCellSource(record({ mgmtNo: '260702006-VOC' }), 'mqis', today)).toBe('260702006-VOC');
+  });
+
+  it('does not use mqisCode as the display source', () => {
+    // The exact bug: a record with a management number showed "—" because the column read
+    // the optional mqisCode extension, which is unpopulated on every seeded record.
+    const withoutExtension = record({ mqisCode: null });
+    expect(withoutExtension.mgmtNo).toBe('TNP-0007');
+    expect(getRecordCellSource(withoutExtension, 'mqis', today)).toBe('TNP-0007');
+
+    // And a present mqisCode must not win over the canonical number.
+    expect(getRecordCellSource(record({ mqisCode: 'MQIS-9999' }), 'mqis', today)).toBe('TNP-0007');
+  });
+
+  it('shows the number for a record that has one, rather than the em dash', () => {
+    for (const mgmtNo of ['1', '000123', '260702006-VOC', 'A1']) {
+      expect(getRecordCellSource(record({ mgmtNo }), 'mqis', today)).toBe(mgmtNo);
+    }
+  });
+
+  it('preserves leading zeros and the original formatting of the stored text', () => {
+    expect(getRecordCellSource(record({ mgmtNo: '0007' }), 'mqis', today)).toBe('0007');
+    expect(getRecordCellSource(record({ mgmtNo: '000042-01' }), 'mqis', today)).toBe('000042-01');
+    // Inner spacing and casing are the operator's, not ours to normalise.
+    expect(getRecordCellSource(record({ mgmtNo: ' 26 07 / A-a ' }), 'mqis', today)).toBe(' 26 07 / A-a ');
+  });
+
+  it('falls back to the placeholder only when there is genuinely no number', () => {
+    for (const mgmtNo of ['', '   ', null, undefined]) {
+      expect(getRecordCellSource(record({ mgmtNo: mgmtNo as string }), 'mqis', today)).toBeNull();
+    }
+    // A malformed value is treated as absent rather than stringified into the cell.
+    expect(getRecordCellSource(record({ mgmtNo: { nested: 'x' } as unknown as string }), 'mqis', today)).toBeNull();
+  });
+
+  it('accepts a numeric value without losing information', () => {
+    expect(canonicalCodeText(42)).toBe('42');
+    expect(canonicalCodeText('0042')).toBe('0042');
+    expect(canonicalCodeText(Number.NaN)).toBeNull();
+    expect(canonicalCodeText(true)).toBeNull();
+  });
+
+  it('sorts management numbers the way an operator reads them', () => {
+    const codes = ['MQIS-10', 'MQIS-2', 'MQIS-1', 'MQIS-20'];
+    expect([...codes].sort(naturalTextCompare)).toEqual(['MQIS-1', 'MQIS-2', 'MQIS-10', 'MQIS-20']);
+    // Zero-padded values still group correctly, and the padding is the tie-breaker.
+    expect(['007', '7', '08'].sort(naturalTextCompare)).toEqual(['7', '007', '08']);
+    // A lexicographic compare — the behaviour before — is what produced the wrong order.
+    expect(['MQIS-10', 'MQIS-2'].sort()).toEqual(['MQIS-10', 'MQIS-2']);
+  });
+});
+
+describe('the manual "Tình trạng" column', () => {
+  it('names the field in one place the row and the save handler share', () => {
+    expect(MANUAL_CONDITION_COLUMN).toBe('condition');
+    expect(MANUAL_CONDITION_FIELD).toBe('manualCondition');
+    expect(REQUIRED_RECORDS_COLUMNS.map(({ key }) => key)).toContain(MANUAL_CONDITION_COLUMN);
+    expect(isManualInlineField(MANUAL_CONDITION_FIELD)).toBe(true);
+    expect(isManualInlineField(MANUAL_DEFECT_NAME_FIELD)).toBe(true);
+    expect(isManualInlineField('status')).toBe(false);
+    expect(isManualInlineField('defectDetails')).toBe(false);
+  });
+
+  it('starts blank rather than borrowing anything from the record', () => {
+    expect(getRecordCellSource(record(), 'condition', today)).toBeNull();
+    // The canonical Approval value, and any unrelated field, must not leak into the column.
+    expect(getRecordCellSource(record({ status: 'Hoàn thành' }), 'condition', today)).toBeNull();
+    expect(getRecordCellSource({ ...record(), condition: 'OK' }, 'condition', today)).toBeNull();
+  });
+
+  it('shows exactly what was entered manually', () => {
+    expect(getRecordCellSource(record({ manualCondition: 'Đang khắc phục' }), 'condition', today)).toBe('Đang khắc phục');
+    expect(getRecordCellSource(record({ manualCondition: '   ' }), 'condition', today)).toBeNull();
+  });
+
+  it('leaves the canonical status untouched, so Approval keeps its own source', () => {
+    const edited = record({ manualCondition: 'Đang khắc phục', status: 'Đợi đối sách' });
+
+    expect(getRecordCellSource(edited, 'condition', today)).toBe('Đang khắc phục');
+    expect(getRecordCellSource(edited, 'approval', today)).toBe('Đợi đối sách');
   });
 });
 
