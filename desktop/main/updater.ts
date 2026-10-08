@@ -52,6 +52,12 @@ export interface ManagedUpdater {
   layout: UpdateLayout;
   local: AppVersion;
   enabled: boolean;
+  /**
+   * The folder the updater will actually read, after settings, channel and environment overrides are
+   * applied — or null when checking is off. Reported to Settings because it is not always the value
+   * that was typed: an override or an empty source changes it.
+   */
+  resolvedSource(): string | null;
   startBackgroundCheck(): void;
   unregister(): void;
 }
@@ -153,6 +159,9 @@ export function createUpdater(context: UpdaterContext): ManagedUpdater {
   });
 
   coordinator.loadLastResult();
+  // Captured by applySource rather than recomputed on demand, so the panel cannot report a folder
+  // that differs from the one being read a moment later.
+  let activeSource: string | null = null;
   applySource();
 
   const handle = (channel: UpdateChannel, listener: (...args: unknown[]) => unknown) => {
@@ -180,9 +189,12 @@ export function createUpdater(context: UpdaterContext): ManagedUpdater {
   });
   handle('tnp:set-update-source', (_source: unknown) => {
     const value = typeof _source === 'string' ? _source : '';
-    context.setUpdateSource(value);
+    // The stored settings are the answer, not the input: `normalizeSettings` normalises the path
+    // (separator runs, a trailing separator, `/` to `\`), and echoing that back is what lets the
+    // panel show the operator the value that will actually be used.
+    const saved = context.setUpdateSource(value);
     applySource();
-    return { source: value, state: coordinator.getState() };
+    return { source: saved.updateSource, state: coordinator.getState() };
   });
 
   function applySource(): void {
@@ -194,13 +206,16 @@ export function createUpdater(context: UpdaterContext): ManagedUpdater {
       env: context.env ?? (process.env as Record<string, string | undefined>),
     });
     if (!resolved) {
+      activeSource = null;
       coordinator.configure(null);
       return;
     }
     try {
+      activeSource = resolved.root;
       coordinator.configure(createFileUpdateSource({ root: resolved.root }));
       context.log(`[update] source configured: ${resolved.root} (channel ${resolved.channel})`);
     } catch (error) {
+      activeSource = null;
       coordinator.configure(null);
       context.log(`[update] the configured source is unusable: ${error instanceof Error ? error.message : String(error)}`);
     }
@@ -211,6 +226,7 @@ export function createUpdater(context: UpdaterContext): ManagedUpdater {
     layout,
     local,
     enabled: true,
+    resolvedSource: () => activeSource,
     /**
      * Fire-and-forget by contract: startup must never wait for the share, and a failure here
      * is only ever logged.

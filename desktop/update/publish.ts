@@ -54,6 +54,20 @@ export interface PublishInput {
   packageName?: string;
   now?: () => Date;
   log?: (line: string) => void;
+  /**
+   * Move the build number up to `published + 1` when the target is already at or ahead of the
+   * requested build, instead of failing. Off in the library so a programmatic publish cannot
+   * quietly invent a number nobody built; the CLI turns it on unless `--no-bump-build` is given.
+   */
+  bumpBuild?: boolean;
+  /**
+   * Refuse outright when the target already carries a manifest.
+   *
+   * This is the guard that keeps a TEST publish from landing on a production share: a TEST
+   * channel may replace its own previous manifest, but pointing the tool at a folder that
+   * already publishes something else is stopped before anything is written.
+   */
+  requireEmptyTarget?: boolean;
 }
 
 export interface PublishResult {
@@ -65,6 +79,10 @@ export interface PublishResult {
   message: string;
   /** Steps completed, in order — useful for proving the manifest went last. */
   steps: string[];
+  /** The build that was requested, before the safety gate moved it forward. */
+  requestedBuild: number;
+  /** True when the gate bumped the build because the share was already at or ahead of it. */
+  buildBumped: boolean;
 }
 
 export class PublishError extends Error {
@@ -74,8 +92,203 @@ export class PublishError extends Error {
   }
 }
 
+/**
+ * Reasons a LAN target cannot be published to, kept as a small closed set so a batch script can
+ * map each one to a distinct operator instruction instead of a stack trace.
+ */
+export type TargetUnusableReason =
+  | 'not-a-directory'
+  | 'not-readable'
+  | 'not-writable'
+  | 'unreachable'
+  | 'unsafe-path';
+
+export interface TargetCheck {
+  ok: boolean;
+  /** True when the folder existed before the check — a created folder is a different warning. */
+  existed: boolean;
+  created: boolean;
+  reason: TargetUnusableReason | null;
+  /** The share this target resolves to, for the log. */
+  target: string;
+  /** Number of `\server\share` levels, when the path is a UNC path. */
+  shareDepth: number | null;
+  message: string;
+}
+
+/**
+ * Validates network access and write permission on a LAN update folder before a build is spent.
+ *
+ * Publishing to a share costs a full build, so the check is deliberately cheap and it is
+ * deliberately *probing* rather than asking: `fs.access` reports success on a read-only SMB
+ * mount for W_OK on some Windows providers, so a real temporary file is created, read back and
+ * removed. Anything left behind is a bug worth failing on.
+ *
+ * It never throws. A share that is offline, a folder that does not exist yet, and a folder that
+ * cannot be written are three different operator problems and get three different answers.
+ */
+export function checkPublishTarget(targetDir: string, options: { create?: boolean } = {}): TargetCheck {
+  const create = options.create !== false;
+  const base: TargetCheck = {
+    ok: false,
+    existed: false,
+    created: false,
+    reason: null,
+    target: targetDir,
+    shareDepth: shareDepthOf(targetDir),
+    message: '',
+  };
+
+  if (!targetDir || !targetDir.trim()) {
+    return { ...base, reason: 'unsafe-path', message: 'The update folder is empty.' };
+  }
+  // A drive-relative or namespace-escaped path is never a publish destination.
+  if (NAMESPACE_PATH_PATTERN.test(targetDir)) {
+    return { ...base, reason: 'unsafe-path', message: 'This kind of Windows namespace path cannot be a publish target.' };
+  }
+
+  let stats: fs.Stats;
+  try {
+    stats = fs.statSync(targetDir);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === 'ENOENT') {
+      if (!create) {
+        return { ...base, reason: 'unreachable', message: `The update folder "${targetDir}" does not exist.` };
+      }
+      return createAndProbe(base);
+    }
+    if (code === 'EPERM' || code === 'EACCES') {
+      return { ...base, reason: 'not-readable', message: `The update folder could not be read: ${code}.` };
+    }
+    // An offline share surfaces as ENETUNREACH / ETIMEDOUT / EHOSTDOWN / EBUSY and, on Windows
+    // through a mapping provider, sometimes as ENODEV or EINVAL.
+    return {
+      ...base,
+      reason: 'unreachable',
+      message: `The update folder could not be reached (${code ?? 'unknown error'}). Is the share online and the VPN up?`,
+    };
+  }
+
+  if (!stats.isDirectory()) {
+    return { ...base, existed: true, reason: 'not-a-directory', message: `"${targetDir}" exists but is not a folder.` };
+  }
+
+  return probeWrite({ ...base, existed: true });
+}
+
+function createAndProbe(base: TargetCheck): TargetCheck {
+  try {
+    fs.mkdirSync(base.target, { recursive: true });
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === 'EPERM' || code === 'EACCES' || code === 'EROFS') {
+      return { ...base, reason: 'not-writable', message: `The update folder could not be created: the share refuses writes (${code}).` };
+    }
+    return { ...base, reason: 'unreachable', message: `The update folder could not be created (${code ?? 'unknown error'}).` };
+  }
+  return probeWrite({ ...base, existed: true, created: true });
+}
+
+/** Creates, reads back and removes a real file: the only write proof that means anything. */
+function probeWrite(base: TargetCheck): TargetCheck {
+  const probePath = path.join(base.target, `.tnp-publish-probe-${process.pid}-${Date.now()}.tmp`);
+  const probeBytes = 'tnp publish target probe';
+  try {
+    fs.writeFileSync(probePath, probeBytes, 'utf8');
+    const readBack = fs.readFileSync(probePath, 'utf8');
+    if (readBack !== probeBytes) {
+      return { ...base, reason: 'not-writable', message: 'The update folder accepted a write but read back different bytes.' };
+    }
+    // An SMB share that re-opens for read immediately proves the bytes really landed.
+    return {
+      ...base,
+      ok: true,
+      reason: null,
+      message: base.created
+        ? `The update folder was created and accepts writes: ${base.target}`
+        : `The update folder is reachable and accepts writes: ${base.target}`,
+    };
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === 'EPERM' || code === 'EACCES' || code === 'EROFS') {
+      return {
+        ...base,
+        reason: 'not-writable',
+        message: `The update folder is read-only for this account (${code}): ${base.target}`,
+      };
+    }
+    return { ...base, reason: 'unreachable', message: `The update folder could not be written (${code ?? 'unknown error'}).` };
+  } finally {
+    try {
+      fs.rmSync(probePath, { force: true });
+    } catch {
+      // A probe we cannot remove is worth knowing about, but never a reason to stop a publish.
+    }
+  }
+}
+
+/**
+ * How deep below the server a target sits: `\server\share` → 2, `\server\share\a` → 3.
+ *
+ * `null` means "not a UNC path" (a local folder, which is legitimate for tests and development).
+ * Namespace-escaped paths report `null` as well, so nothing downstream can mistake one for a
+ * network location. Both separators are accepted because an Explorer address bar yields `/`.
+ */
+export function shareDepthOf(targetDir: string): number | null {
+  if (NAMESPACE_PATH_PATTERN.test(targetDir)) return null;
+  if (!targetDir.startsWith('\\\\') && !targetDir.startsWith('//')) return null;
+  const segments = targetDir
+    .slice(2)
+    .split(PATH_SEPARATORS)
+    .filter((segment) => segment.length > 0);
+  return segments.length;
+}
+
+/**
+ * How many path levels a manifest's `package` name will be resolved against. The publisher
+ * writes `<targetDir>\<package>`, so a target that IS the share root and a target nested inside
+ * it behave identically — this is reported so an operator can see which folder they chose.
+ */
+export function describeTarget(target: TargetCheck | null, manifest: UpdateManifest | null): string {
+  const head = target ? `${target.target} (${target.shareDepth === null ? 'local folder' : `UNC depth ${target.shareDepth}`})` : 'unknown target';
+  return manifest ? `${head} → build ${manifest.build}, ${manifest.package}` : head;
+}
+
+/**
+ * The build actually safe to publish.
+ *
+ * `package.json` is authoritative, so it is normally used as-is. When the target already
+ * publishes an equal or newer build, the number is moved to `published + 1` rather than failing:
+ * a shared LAN folder is written by more than one developer, and refusing to publish until someone
+ * remembers to edit `package.json` produces exactly the outcome the gate exists to prevent —
+ * an operator pointing the client at a half-published build.
+ */
+export function nextPublishableBuild(requested: number, publishedBuild: number | null): { build: number; bumped: boolean } {
+  if (!Number.isInteger(requested) || requested <= 0) {
+    throw new PublishError('The build number must be a positive integer.');
+  }
+  if (publishedBuild === null) return { build: requested, bumped: false };
+  if (!Number.isInteger(publishedBuild) || publishedBuild <= 0) return { build: requested, bumped: false };
+  if (requested > publishedBuild) return { build: requested, bumped: false };
+  return { build: publishedBuild + 1, bumped: true };
+}
+
 const TEMP_SUFFIX = '.tmp';
 const STALE_TEMP_MS = 6 * 60 * 60 * 1000;
+
+/**
+ * A `\server\share` path is the only network location a publish may target. `\?\` and `\.`\ are
+ * Win32 namespace escapes (device paths, the DOS-device form) and must never be written into,
+ * so they are rejected before anything touches the filesystem.
+ *
+ * Written with explicit escapes rather than an inline `/.../` literal: `[\\/]` inside a regex
+ * character class is easy to author as `[?.]`, which is "an optional dot" and matches nothing
+ * useful — a mistake that only shows up as a share that happily accepts a device path.
+ */
+const NAMESPACE_PATH_PATTERN = new RegExp('^[\\\\/]{2}[?\\\\.][\\\\/]', 'u');
+/** Separators inside a Windows path: both are accepted on input, only `\` is produced. */
+const PATH_SEPARATORS = new RegExp('[\\\\/]', 'u');
 
 /**
  * Neutralises a value before it is used in a file name. Collapsing dot runs and stripping
@@ -151,19 +364,52 @@ export async function publishUpdate(input: PublishInput): Promise<PublishResult>
     throw new PublishError(`The channel "${input.channel}" is not a valid channel identifier.`);
   }
 
+  const requestedBuild = input.build;
+
+  // Reachability and write permission are settled before any work is done, so a build is never
+  // spent against a share that cannot accept it. `mkdirSync` alone would silently create a
+  // plausible-looking local folder when a typo'd UNC fails to resolve.
+  const target = checkPublishTarget(input.targetDir, { create: true });
+  if (!target.ok) {
+    throw new PublishError(`The update folder is not usable: ${target.message}`);
+  }
+  if (target.created) log(`created the update folder ${target.target}`);
+  steps.push('check-target');
+
   fs.mkdirSync(input.targetDir, { recursive: true });
   cleanStaleTempFiles(input.targetDir, now().getTime(), log);
 
-  const requestedName = input.packageName ?? defaultPackageName(input.version, input.build, input.channel);
-  const packageName = assertPublishablePackageName(requestedName, input.targetDir);
-
-  // Gate: never republish an equal or older build over a newer published one.
+  // Gate: never replace a manifest that belongs to another channel or that the caller did not
+  // mean to touch. A production share must not be overwritten by a TEST publish.
   const existing = readExistingManifest(input.targetDir);
-  if (existing && existing.build >= input.build) {
+  if (existing && existing.channel !== input.channel) {
     throw new PublishError(
-      `The update source already publishes build ${existing.build}; refusing to publish build ${input.build}.`,
+      `The update folder already publishes channel "${existing.channel}", not "${input.channel}". Refusing to replace it.`,
     );
   }
+  if (input.requireEmptyTarget === true && existing) {
+    throw new PublishError(
+      `The update folder already publishes build ${existing.build} on channel "${existing.channel}" and --require-empty-target was given. Nothing was written.`,
+    );
+  }
+
+  // Build safety: `package.json` wins; a share already at or ahead of it only moves the number
+  // up when the caller asked for that explicitly.
+  const buildDecision = nextPublishableBuild(requestedBuild, existing ? existing.build : null);
+  if (buildDecision.bumped && input.bumpBuild !== true) {
+    throw new PublishError(
+      `The update source already publishes build ${existing?.build}; refusing to publish build ${requestedBuild}. `
+      + 'Raise tnpBuild in package.json, or let the publisher use the next free build.',
+    );
+  }
+  const build = buildDecision.build;
+  if (buildDecision.bumped) {
+    log(`build ${requestedBuild} is already published; bumping to ${build}`);
+    steps.push('bump-build');
+  }
+
+  const requestedName = input.packageName ?? defaultPackageName(input.version, build, input.channel);
+  const packageName = assertPublishablePackageName(requestedName, input.targetDir);
 
   const workDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tnp-publish-'));
   try {
@@ -204,7 +450,7 @@ export async function publishUpdate(input: PublishInput): Promise<PublishResult>
       product: EXPECTED_PRODUCT,
       channel: input.channel,
       version: input.version,
-      build: input.build,
+      build,
       architecture: EXPECTED_ARCHITECTURE,
       package: packageName,
       sha256,
@@ -257,7 +503,17 @@ export async function publishUpdate(input: PublishInput): Promise<PublishResult>
     }
     steps.push('verify-published-manifest');
 
-    return { ok: true, manifest, packagePath: finalPath, sha256, size, message: 'Published.', steps };
+    return {
+      ok: true,
+      manifest,
+      packagePath: finalPath,
+      sha256,
+      size,
+      message: buildDecision.bumped ? `Published as build ${build} (requested ${requestedBuild}).` : 'Published.',
+      steps,
+      requestedBuild,
+      buildBumped: buildDecision.bumped,
+    };
   } finally {
     fs.rmSync(workDir, { recursive: true, force: true });
   }
@@ -311,27 +567,62 @@ function listFilesRelative(root: string, prefix = ''): string[] {
  * Command line entry point (build/test machine only)
  * ------------------------------------------------------------------ */
 
+/** Boolean switches carry no value, so they must be parsed positionally, not greedily. */
+const PUBLISH_BOOLEAN_FLAGS = ['fail-if-exists', 'bump-build', 'no-bump-build', 'check-only'] as const;
+
 export interface PublishCliOptions {
   sourceDir: string;
   targetDir: string;
   channel: string;
   releaseNotes?: string;
   packageName?: string;
+  /** Refuse to touch a target that already publishes a manifest. */
+  requireEmptyTarget?: boolean;
+  /** Move the build number up instead of failing when the target is at or ahead of it. */
+  bumpBuild?: boolean;
+  /** Validate the target and report the build that would be published, without publishing. */
+  checkOnly?: boolean;
+  /**
+   * The project root whose `package.json` holds the authoritative version and build.
+   *
+   * This exists because the compiled script's own location is not a reliable answer: run from the
+   * checkout it sits three levels below `package.json`, but inside a portable runtime it sits in
+   * `resources/app/dist/...` where the same relative path lands on the *runtime's* metadata file,
+   * not the project's. Passing the root makes the bump write the file that will be built next.
+   */
+  projectDir?: string;
+}
+
+/** Where the authoritative `package.json` lives for this run. */
+export function resolveAppPackageJson(projectDir?: string): string {
+  if (projectDir && projectDir.trim()) return path.join(path.resolve(projectDir.trim()), 'package.json');
+  return path.resolve(__dirname, '../../../package.json');
 }
 
 export function parsePublishArgs(argv: readonly string[]): PublishCliOptions {
   const values = new Map<string, string>();
+  const flags = new Set<string>();
   for (let index = 0; index < argv.length; index += 1) {
     const token = argv[index];
-    if (token.startsWith('--')) {
-      values.set(token.slice(2), String(argv[index + 1] ?? ''));
-      index += 1;
+    if (!token.startsWith('--')) continue;
+    const name = token.slice(2);
+    if ((PUBLISH_BOOLEAN_FLAGS as readonly string[]).includes(name)) {
+      // A switch: the next token is the *next* argument, not this one's value.
+      flags.add(name);
+      continue;
     }
+    values.set(name, String(argv[index + 1] ?? ''));
+    index += 1;
   }
   const sourceDir = values.get('source') ?? '';
   const targetDir = values.get('target') ?? '';
-  if (!sourceDir || !targetDir) {
-    throw new PublishError('Usage: publish.js --source <portable folder> --target <LAN folder> [--channel test] [--notes "..."] [--package name.zip]');
+  // `--check-only` validates a folder and needs no source, so it is exempt from that rule.
+  if (!targetDir || (!sourceDir && !flags.has('check-only'))) {
+    throw new PublishError(
+      'Usage: publish.js --source <portable folder> --target <LAN folder> [--channel test] [--notes "..."] '
+      + '[--package name.zip] [--project <repo root>] [--bump-build] [--fail-if-exists] '
+      + '| publish.js --target <LAN folder> --check-only',
+    );
   }
   return {
     sourceDir,
@@ -341,7 +632,43 @@ export function parsePublishArgs(argv: readonly string[]): PublishCliOptions {
     channel: (values.get('channel') ?? TEST_CHANNEL).trim().toLowerCase(),
     releaseNotes: values.get('notes'),
     packageName: values.get('package'),
+    requireEmptyTarget: flags.has('fail-if-exists'),
+    projectDir: (values.get('project') ?? '').trim() || undefined,
+    // One-click publishing must not dead-end on "someone else's build number is already taken",
+    // so bumping is on by default; `--no-bump-build` restores the strict rule that package.json
+    // is the only authority and the operator must raise it deliberately.
+    bumpBuild: !flags.has('no-bump-build'),
+    checkOnly: flags.has('check-only'),
   };
+}
+
+/**
+ * Writes `version` / `tnpBuild` back to the application's package.json.
+ *
+ * Only the two keys are touched and the file is rewritten through a temporary name and a rename,
+ * because the portable build reads this file: a half-written package.json produces an app that
+ * reports no version at all. This is what lets a bumped build number reach the client, so the
+ * installed version the Owner PC reports matches the manifest that was published for it.
+ */
+export function writeAppVersionFile(
+  packageJsonPath: string,
+  next: { version: string; build: number },
+): void {
+  if (!Number.isInteger(next.build) || next.build <= 0) {
+    throw new PublishError('The build number must be a positive integer.');
+  }
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8')) as Record<string, unknown>;
+  } catch (error) {
+    throw new PublishError(`The application package.json could not be read: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  parsed.version = next.version;
+  parsed.tnpBuild = next.build;
+
+  const temporary = `${packageJsonPath}.tnp-bump.tmp`;
+  fs.writeFileSync(temporary, `${JSON.stringify(parsed, null, 2)}\n`, 'utf8');
+  fs.renameSync(temporary, packageJsonPath);
 }
 
 /** Reads the authoritative version and build from the application's package.json. */
@@ -358,12 +685,65 @@ if (require.main === module) {
   const log = (line: string): void => { process.stdout.write(`[publish] ${line}\n`); };
   try {
     const options = parsePublishArgs(process.argv.slice(2));
-    const { version, build } = readAppVersionFile(path.resolve(__dirname, '../../../package.json'));
+
+    // `--check-only` is the pre-flight the batch script runs before it spends a build on a share
+    // it cannot write to: reachability, write permission, the current published build, and the
+    // build number that *would* be used.
+    if (options.checkOnly) {
+      const target = checkPublishTarget(options.targetDir, { create: false });
+      const existing = readExistingManifest(options.targetDir);
+      const packageJsonPath = resolveAppPackageJson(options.projectDir);
+      const current = fs.existsSync(packageJsonPath) ? readAppVersionFile(packageJsonPath) : null;
+
+      log(`target     : ${target.target}`);
+      log(`kind       : ${target.shareDepth === null ? 'local folder' : `UNC, ${target.shareDepth} segment${target.shareDepth === 1 ? '' : 's'} deep`}`);
+      log(`reachable  : ${target.ok || target.existed ? 'yes' : 'no'}`);
+      log(`writable   : ${target.ok ? 'yes' : 'no'}`);
+      log(`published  : ${existing ? `build ${existing.build} (channel ${existing.channel})` : 'nothing yet'}`);
+      if (current) {
+        const decision = nextPublishableBuild(current.build, existing ? existing.build : null);
+        log(`app version: ${current.version} / build ${current.build}`);
+        log(`next build : ${decision.build}${decision.bumped ? ' (bumped over the published build)' : ''}`);
+        if (decision.bumped && !options.bumpBuild) {
+          log('the published build is not behind package.json; pass --bump-build or raise tnpBuild.');
+        }
+      }
+      if (options.channel && existing && existing.channel !== options.channel) {
+        log(`BLOCKED: the folder publishes channel "${existing.channel}", not "${options.channel}".`);
+        process.exitCode = 1;
+      } else if (!target.ok) {
+        log(`BLOCKED: ${target.message}`);
+        process.exitCode = 1;
+      } else {
+        log('the update folder is usable.');
+      }
+      process.exitCode = process.exitCode ?? (target.ok && (!existing || existing.channel === options.channel) ? 0 : 1);
+      if (target.created) log(`created    : ${target.target}`);
+      process.exit(process.exitCode ?? 0);
+    }
+
+    // With a project root the bump is written back to the file the *next build* compiles, so the
+    // number the client reports and the number in the manifest cannot drift apart.
+    const packageJsonPath = resolveAppPackageJson(options.projectDir);
+    const { version, build } = readAppVersionFile(packageJsonPath);
     void publishUpdate({ ...options, version, build, log }).then((result) => {
       if (!result.ok) {
         process.stderr.write(`[publish] FAILED: ${result.message}\n`);
         process.exitCode = 1;
         return;
+      }
+      if (result.buildBumped) {
+        // Keep the source of truth honest: the bumped number is what the client will read back as
+        // its installed version, so it has to be in package.json for the *next* build too.
+        try {
+          writeAppVersionFile(packageJsonPath, {
+            version: result.manifest?.version ?? version,
+            build: result.manifest?.build ?? build,
+          });
+          log(`package.json updated to build ${result.manifest?.build} so the next build matches what was published`);
+        } catch (error) {
+          log(`warning: package.json was not updated (${error instanceof Error ? error.message : String(error)})`);
+        }
       }
       log(`done: ${result.manifest?.product} ${result.manifest?.version} build ${result.manifest?.build} → ${result.packagePath}`);
       log(`sha256 ${result.sha256}`);

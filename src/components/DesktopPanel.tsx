@@ -2,14 +2,16 @@ import { useCallback, useEffect, useState } from 'react';
 import type { Locale, MessageKey } from '../i18n';
 import { translate } from '../i18n';
 import { getDesktopBridge } from '../services/desktop/desktopBridge';
-import type { TnpDesktopState } from '../../desktop/types/tnpDesktop';
+import { isValidUncPath, looksLikeNetworkPath } from '../utils/uncPath';
+import type { TnpDesktopUpdateSummary, TnpDesktopState, TnpUpdateSourceValidation } from '../../desktop/types/tnpDesktop';
 
 /**
  * Owner-only panel, rendered exclusively inside the Windows TEST wrapper.
  *
- * It answers three questions and nothing more: where the data physically lives, whether other
- * PCs can reach it, and how to take a snapshot. It is deliberately not an admin console — the
- * Phase 5 UI stays compact, and this panel appears only when `window.tnpDesktop` exists.
+ * It answers four questions and nothing more: where the data physically lives, whether other PCs
+ * can reach it, how to take a snapshot, and whether this PC can actually see its update folder.
+ * It is deliberately not an admin console — the Phase 5 UI stays compact, and this panel appears
+ * only when `window.tnpDesktop` exists.
  */
 interface DesktopPanelProps {
   locale: Locale;
@@ -22,6 +24,9 @@ export function DesktopPanel({ locale, onServerRestarted }: DesktopPanelProps) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  /** Only ever set by the explicit Check button: a dead share is discovered by timeout. */
+  const [sourceCheck, setSourceCheck] = useState<TnpUpdateSourceValidation | null>(null);
+  const [checking, setChecking] = useState(false);
 
   const load = useCallback(async () => {
     const desktop = getDesktopBridge();
@@ -74,6 +79,43 @@ export function DesktopPanel({ locale, onServerRestarted }: DesktopPanelProps) {
       setError(reason instanceof Error ? reason.message : translate(locale, 'desktopActionFailed'));
     } finally {
       setBusy(false);
+    }
+  }
+
+  /**
+   * Validates the folder currently in the input, not the one already saved: the point is to catch a
+   * typo before it is persisted, and to explain a saved value that stopped working.
+   *
+   * The shape is checked locally first. A path that cannot be a UNC path will fail on the network
+   * too, and waiting seconds for that answer teaches the operator to stop pressing the button.
+   */
+  async function checkUpdateSource(value: string) {
+    const desktop = getDesktopBridge();
+    if (!desktop) return;
+    setChecking(true);
+    setError('');
+    setSourceCheck(null);
+    try {
+      const trimmed = value.trim();
+      // Only a value that looks like a network path is shape-checked first: a local folder is a
+      // legitimate value here, and the network stack is the only authority on whether it resolves.
+      if (looksLikeNetworkPath(trimmed) && !isValidUncPath(trimmed)) {
+        setSourceCheck({
+          state: 'invalid-manifest',
+          source: trimmed,
+          message: translate(locale, 'updateSourceShapeInvalid'),
+          usable: false,
+          manifest: null,
+          channelMatches: null,
+          checkedAt: new Date().toISOString(),
+        });
+        return;
+      }
+      setSourceCheck(await desktop.validateUpdateSource(trimmed));
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : translate(locale, 'desktopActionFailed'));
+    } finally {
+      setChecking(false);
     }
   }
 
@@ -165,8 +207,18 @@ export function DesktopPanel({ locale, onServerRestarted }: DesktopPanelProps) {
         />
       </label>
       <p className="hint">{translate(locale, 'updateSourceHelp')}</p>
+      <UpdateSourceFacts locale={locale} summary={state?.update ?? null} />
+      <p className="hint">{translate(locale, 'updateSourceCheckHelp')}</p>
 
       <div className="desktop-actions">
+        <button
+          type="button"
+          className="secondary-button"
+          disabled={busy || checking}
+          onClick={() => void checkUpdateSource(state?.settings.updateSource ?? '')}
+        >
+          {checking ? translate(locale, 'updateSourceChecking') : translate(locale, 'updateSourceCheck')}
+        </button>
         <button
           type="button"
           className="secondary-button"
@@ -188,6 +240,11 @@ export function DesktopPanel({ locale, onServerRestarted }: DesktopPanelProps) {
 
       {notice && <p className="hint desktop-notice">{notice}</p>}
       {error && <p className="error">{error}</p>}
+      {sourceCheck && (
+        <p className={sourceCheck.usable ? 'hint desktop-notice' : 'error'} role="status">
+          {sourceCheck.message}
+        </p>
+      )}
 
       {state && (
         <p className="warning-note">
@@ -195,6 +252,40 @@ export function DesktopPanel({ locale, onServerRestarted }: DesktopPanelProps) {
         </p>
       )}
     </article>
+  );
+}
+
+/**
+ * The three facts an operator needs before trusting an update folder: which build is running now,
+ * which folder the app will really read, and whether the channel matches. Rendered as a plain list
+ * because every value in it comes from the main process and must be copyable for a support chat.
+ */
+function UpdateSourceFacts({
+  locale,
+  summary,
+}: {
+  locale: Locale;
+  summary: TnpDesktopUpdateSummary | null | undefined;
+}) {
+  if (!summary) {
+    return <p className="hint">{translate(locale, 'desktopUpdateUnavailable')}</p>;
+  }
+  const installed = summary.installed
+    ? `${summary.installed.version} · build ${summary.installed.build}`
+    : '—';
+  return (
+    <dl className="desktop-facts">
+      <div>
+        <dt>{translate(locale, 'desktopInstalledVersion')}</dt>
+        <dd>{installed}</dd>
+      </div>
+      <div>
+        <dt>{translate(locale, 'desktopResolvedSource')}</dt>
+        <dd>
+          <code>{summary.resolvedSource ?? translate(locale, 'desktopNoSource')}</code>
+        </dd>
+      </div>
+    </dl>
   );
 }
 

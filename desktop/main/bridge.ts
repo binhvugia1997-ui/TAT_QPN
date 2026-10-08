@@ -15,7 +15,9 @@ import {
   describePickedFile,
   normalizeBridgeRecordId,
 } from './bridgeCore';
+import { validateUpdateSource } from '../update/source';
 import type { DesktopSettings } from './settings';
+import type { TnpDesktopUpdateSummary } from '../types/tnpDesktop';
 import type { PortableLayout } from './paths';
 import type { OwnedServer } from './serverProcess';
 
@@ -29,6 +31,7 @@ export const BRIDGE_CHANNELS = [
   'tnp:set-lan-enabled',
   'tnp:set-workstation-label',
   'tnp:restart-server',
+  'tnp:validate-update-source',
 ] as const;
 
 export type BridgeChannel = (typeof BRIDGE_CHANNELS)[number];
@@ -40,6 +43,12 @@ export interface BridgeContext {
   setLanEnabled(enabled: boolean): DesktopSettings;
   setWorkstationLabel(label: string): DesktopSettings;
   restartServer(): Promise<{ baseUrl: string; port: number }>;
+  /**
+   * Installed version and update configuration, for the Settings panel. Optional because the
+   * updater only exists in the packaged build; without it the panel says so rather than showing an
+   * empty field that looks like a broken install.
+   */
+  getUpdateSummary?(): TnpDesktopUpdateSummary | undefined;
 }
 
 interface ServerResponse<T> {
@@ -127,7 +136,25 @@ export function registerBridge(context: BridgeContext): void {
           'This TEST build has no authentication and no TLS. LAN mode makes the data readable and '
           + 'writable by anyone on the same local network.',
       },
+      // Nothing above touches the share: reading it here would put an SMB timeout in front of every
+      // panel open. Validating a folder is an explicit action, on its own channel.
+      update: context.getUpdateSummary?.() ?? undefined,
     };
+  });
+
+  /**
+   * Reads the configured update folder and reports exactly what is missing from it.
+   *
+   * This is the only bridge action that touches the network path the operator typed, and it is
+   * read-only: a client must never write to the update share. It is also the only one that can block
+   * for seconds, because an unreachable server is discovered by timeout — which is why the panel
+   * calls it from a button and never while loading state.
+   */
+  handle('tnp:validate-update-source', async (_event, source: unknown) => {
+    const settings = context.getSettings();
+    return validateUpdateSource(typeof source === 'string' ? source : '', {
+      channel: settings.updateChannel,
+    });
   });
 
   /** Native picker; the chosen path never leaves the main process. */

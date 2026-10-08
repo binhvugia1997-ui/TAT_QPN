@@ -24,7 +24,8 @@
   },
   "include": [
     "desktop/**/*.ts",
-    "server/startupSignals.ts"
+    "server/startupSignals.ts",
+    "src/utils/uncPath.ts"
   ],
   "exclude": [
     "**/*.test.ts",

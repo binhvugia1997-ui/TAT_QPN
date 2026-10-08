@@ -15,13 +15,18 @@ REM    - git reset --hard / stash / rebase / force-push / auto-merge
 REM    - touch data\, backups\ or reports\ on any machine
 REM    - publish to a production channel or a production manifest
 REM
-REM  Usage:  BUILD_AND_PUBLISH_TNP_TEST.bat ["\\BUILD-PC\TNP_Update\Test"]
+REM  Usage:  BUILD_AND_PUBLISH_TNP_TEST.bat ["\\SERVER\Share\TAT QPN\updates"]
+REM         No argument publishes to the default test folder below. Always quote the path:
+REM         the share folder contains a space, and an unquoted argument is split at it.
 REM ===========================================================================
 
 REM --- configuration -------------------------------------------------------
 set "EXPECTED_BRANCH=arena/36b4835b-tat-qpn"
 set "TNP_UPDATE_TARGET=%~1"
-if not defined TNP_UPDATE_TARGET set "TNP_UPDATE_TARGET=\\BUILD-PC\TNP_Update\Test"
+REM The test channel lives in the same spaced folder the clients read ("TAT QPN"), and an
+REM unquoted spaced argument is split by cmd.exe at the space: the publish would then land in
+REM ...\ReportExtractor_Update\TAT and every client would keep reading the old manifest.
+if not defined TNP_UPDATE_TARGET set "TNP_UPDATE_TARGET=\\192.168.103.12\ReportExtractor_Update\TAT QPN\updates"
 set "CHANNEL=test"
 set "REPO_ROOT=%~dp0"
 if "%REPO_ROOT:~-1%"=="\" set "REPO_ROOT=%REPO_ROOT:~0,-1%"
@@ -29,6 +34,18 @@ if "%REPO_ROOT:~-1%"=="\" set "REPO_ROOT=%REPO_ROOT:~0,-1%"
 set "LOG_DIR=%REPO_ROOT%\artifacts"
 
 if not exist "%LOG_DIR%" mkdir "%LOG_DIR%" >nul 2>&1
+
+REM If the quoting above ever regressed, the target holds only the part before the first space, so
+REM it stops dead at the folder name that contains it. That is the symptom, and it is refused rather
+REM than published to: a manifest in the wrong folder is read by every client as "update
+REM available" pointing at a package that is not there. Substring comparison rather than
+REM findstr, whose regex dialect backslash-escapes a literal - the kind of rule that reads fine at
+REM review time and silently matches nothing at run time.
+if "%TNP_UPDATE_TARGET:~-3%"=="TAT" ^
+  call :fail "The update target was truncated at a space. Quote the whole path when you pass it."
+REM A leading "\\" means a network path, and node's startsWith is the same rule the app applies.
+node -e "const t=String(process.argv[1]).trim();process.exit(t.startsWith(String.fromCharCode(92,92))?0:1)" "%TNP_UPDATE_TARGET%" >nul 2>&1 || ^
+  call :log "WARNING: the target is not a UNC path, so only this PC can read the published update."
 call :log "==== TNP TEST build and publish ===="
 call :log "repository : %REPO_ROOT%"
 call :log "target     : %TNP_UPDATE_TARGET%"
@@ -118,17 +135,27 @@ if not exist "%PORTABLE_DIR%\TNP Defect Management TEST.exe" (
 )
 call :log "portable   : %PORTABLE_DIR%"
 
-REM --- 8. Package, inspect, hash, publish (manifest last) -----------------
+REM --- 8. Pre-flight the update folder, then publish (manifest last) ------
+REM Reachability is not the same as write permission, and fs.access(W_OK) reports "writable" on a
+REM read-only SMB mount, so the publisher proves it by creating, reading and removing a probe file.
+REM Better to learn that now than after the gates and the build have taken their time.
+if not exist "%REPO_ROOT%\dist-desktop\desktop\update\publish.js" (
+  call :fail "The publish tool is missing. Run npm run build:desktop before publishing."
+)
+call :step "update folder pre-flight" "call node "%REPO_ROOT%\dist-desktop\desktop\update\publish.js" --target "%TNP_UPDATE_TARGET%" --channel %CHANNEL% --project "%REPO_ROOT%" --check-only"
+
+REM --- 9. Publish ----------------------------------------------------------
 call :log "publishing to %TNP_UPDATE_TARGET% ..."
 call node "%REPO_ROOT%\dist-desktop\desktop\update\publish.js" ^
   --source "%PORTABLE_DIR%" ^
   --target "%TNP_UPDATE_TARGET%" ^
   --channel %CHANNEL% ^
+  --project "%REPO_ROOT%" ^
   --notes "TEST build published on %STAMP%"
 if errorlevel 1 call :fail "Publishing failed. The previously published version.json was NOT replaced."
 
 call :log "==== PUBLISHED SUCCESSFULLY ===="
-call :log "Order used: build -^> gates -^> package -^> inspect -^> sha256 -^> copy -^> verify -^> rename -^> manifest LAST"
+call :log "Order used: build -^> gates -^> pre-flight -^> package -^> inspect -^> sha256 -^> copy -^> verify -^> rename -^> manifest LAST"
 call :log "The Owner PC will see the update at its next start."
 echo.
 echo Published. Log: %LOG_FILE%
@@ -144,7 +171,10 @@ call :log "--- %~1: OK ---"
 goto :eof
 
 :log
-echo %~1
+REM %~1 strips the surrounding quotes but also truncates an *unquoted* argument at its first space,
+REM so the raw parameter is echoed with only the quotes removed. `echo(` makes an empty or
+REM punctuation-only message safe.
+echo(%~1
 >>"%LOG_FILE%" echo [%DATE% %TIME%] %~1
 goto :eof
 
