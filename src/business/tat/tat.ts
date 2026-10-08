@@ -1,6 +1,6 @@
 import type { DefectRecord } from '../../models/defect-record';
 import { addCalendarDays, daysUntil, differenceInCalendarDays, normalizeDateOnly, type DateOnly } from '../../utils/date';
-import { isCompletedStatus } from '../status/status';
+import { isCompletedStatus, isPendingWindowApplicable } from '../status/status';
 
 export const LEGACY_TAT_WINDOW_DAYS = 7;
 export type TatTier = 'overdue' | 'due-today' | 'one-day' | 'two-days' | 'on-track';
@@ -39,15 +39,20 @@ export function getTatDaysRemaining(
  * disagree. It is derived on every render and is never persisted to SQLite.
  *
  * `registeredDate = 2026-10-01`, `today = 2026-10-11` → 7 - 10 = -3, whatever the dueDate is.
+ *
+ * The window is only meaningful while the defect is still in the active response stage, so
+ * records in a no-longer-active status ("Hoàn thành", "Đợi duyệt", "Đợi xét") return `null`
+ * and the cell renders blank — not 0, not a negative number.
  */
 export function getPendingDays(
-  record: Pick<DefectRecord, 'registeredDate'>,
+  record: Pick<DefectRecord, 'registeredDate' | 'status'>,
   today: DateOnly,
 ): number | null {
+  if (!isPendingWindowApplicable(record.status)) return null;
   try {
     return LEGACY_TAT_WINDOW_DAYS - differenceInCalendarDays(today, String(record.registeredDate ?? ''));
   } catch {
-    // A blank or unparsable registration date has no pending window; render "—" instead.
+    // A blank or unparsable registration date has no pending window; render blank.
     return null;
   }
 }

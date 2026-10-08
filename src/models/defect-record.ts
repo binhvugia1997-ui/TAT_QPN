@@ -27,6 +27,14 @@ export interface DefectRecord {
   project?: NullableString;
   model?: NullableString;
   defectDetails?: NullableString;
+  /**
+   * App-managed "Tên lỗi" shown and edited in the Records table.
+   *
+   * Deliberately separate from the imported `defectDetails`, which is the TNP source value
+   * and stays untouched. This field is never produced by the header mapping and is not part
+   * of the existing-record import whitelist, so an Excel re-import can never overwrite it.
+   */
+  manualDefectName?: NullableString;
   sampleQty?: number | null;
   defectQty?: number | null;
   defectRate?: number | null;
@@ -102,6 +110,7 @@ const STRING_FIELDS = new Set([
   'project',
   'model',
   'defectDetails',
+  'manualDefectName',
   'reason1',
   'reason2',
   'inspector',

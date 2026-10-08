@@ -122,6 +122,9 @@ export function applyRecordFilters(
         record.mqisCode,
         record.title,
         record.defectDetails,
+        // The "Tên lỗi" column shows the manual value, so a search has to reach it too;
+        // the imported source text stays searchable alongside it.
+        record.manualDefectName,
         record.partName,
         record.partCode,
         record.model,

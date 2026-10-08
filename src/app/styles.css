@@ -171,6 +171,15 @@ button:disabled { cursor: not-allowed; opacity: .62; }
 .more-filters summary { display: inline-flex; align-items: center; justify-content: center; min-height: 34px; padding: 7px 10px; color: #46554a; background: #f7f9f5; border: 1px solid #dfe4dc; border-radius: 6px; cursor: pointer; font-size: 10px; font-weight: 700; list-style: none; white-space: nowrap; }
 .more-filters summary::-webkit-details-marker { display: none; }
 .more-filters summary::after { content: '＋'; margin-left: 6px; color: var(--orange); font-weight: 800; }
+.columns-control .more-filter-content { width: min(230px, calc(100vw - 40px)); }
+.columns-menu-actions { display: flex; gap: 6px; padding-bottom: 8px; margin-bottom: 8px; border-bottom: 1px solid #eef1eb; }
+.columns-menu-actions button { flex: 1; padding: 5px 7px; border: 1px solid #dfe4dc; border-radius: 6px; color: #46554a; background: #f7f9f5; font-size: 9px; font-weight: 700; cursor: pointer; }
+.columns-menu-actions button:hover { background: #eef2ea; }
+.columns-menu-list { display: flex; flex-direction: column; gap: 2px; max-height: 290px; overflow: auto; }
+.columns-menu-item { display: flex; align-items: center; gap: 7px; padding: 3px 4px; border-radius: 5px; color: #46554a; font-size: 10px; font-weight: 600; cursor: pointer; }
+.columns-menu-item:hover { background: #f5f8f3; }
+.columns-menu-item input { accent-color: var(--orange); }
+.columns-menu-item input:disabled { cursor: not-allowed; }
 .more-filters[open] summary::after { content: '−'; }
 .more-filter-content { position: absolute; z-index: 10; top: calc(100% + 7px); right: 0; width: min(710px, calc(100vw - 40px)); padding: 13px; background: #fff; border: 1px solid #dce3d9; border-radius: 9px; box-shadow: 0 12px 30px rgb(23 35 30 / 14%); }
 .more-filter-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
@@ -185,29 +194,15 @@ button:disabled { cursor: not-allowed; opacity: .62; }
 /* The approved 14-column Records layout is wider than the panel, so `.table-scroll` keeps
    the horizontal scrollbar and every required column stays reachable instead of the table
    collapsing back into the old compact subset. */
-.records-table { width: 100%; min-width: 1750px; border-collapse: separate; border-spacing: 0; table-layout: fixed; }
-.records-table.has-ca-link { min-width: 1852px; }
+/* Widths and the minimum width come from the visible column set (see the generated
+   <colgroup> and the inline min-width), so hiding a column lets the rest use the space.
+   `.table-scroll` keeps the horizontal scrollbar, so nothing is crushed to unreadability. */
+.records-table { width: 100%; border-collapse: separate; border-spacing: 0; table-layout: fixed; }
 .records-table th { position: sticky; top: 0; z-index: 1; padding: 10px 9px; color: #778278; background: #f8f9f6; border-bottom: 1px solid #e6e9e2; font-size: 9px; font-weight: 750; letter-spacing: .045em; text-align: left; text-transform: uppercase; white-space: nowrap; }
 .table-sort-button { display: inline-flex; align-items: center; gap: 5px; padding: 0; color: inherit; background: transparent; border: 0; font: inherit; letter-spacing: inherit; text-align: left; text-transform: inherit; white-space: nowrap; cursor: pointer; }
 .table-sort-button:hover { color: #34473a; }
 .table-sort-button:focus-visible { outline: 2px solid var(--orange); outline-offset: 3px; }
 .table-sort-indicator { color: var(--orange); font-size: 10px; }
-/* Column widths follow the approved Records column order exactly. */
-.records-table th:nth-child(1) { width: 52px; }   /* NO */
-.records-table th:nth-child(2) { width: 130px; }  /* MQIS */
-.records-table th:nth-child(3) { width: 108px; }  /* Registered Date */
-.records-table th:nth-child(4) { width: 100px; }  /* PIC */
-.records-table th:nth-child(5) { width: 130px; }  /* Approval */
-.records-table th:nth-child(6) { width: 78px; }   /* PLANT */
-.records-table th:nth-child(7) { width: 200px; }  /* Title */
-.records-table th:nth-child(8) { width: 160px; }  /* Occur place */
-.records-table th:nth-child(9) { width: 170px; }  /* Công đoạn quy trách */
-.records-table th:nth-child(10) { width: 220px; } /* Tên lỗi */
-.records-table th:nth-child(11) { width: 100px; } /* Tình trạng */
-.records-table th:nth-child(12) { width: 74px; }  /* QPN */
-.records-table th:nth-child(13) { width: 128px; } /* TAT Hệ thống */
-.records-table th:nth-child(14) { width: 100px; } /* Ngày Pending */
-.records-table th:nth-child(15) { width: 102px; } /* CA file (corrective workspace only) */
 .records-table td { height: 45px; overflow: hidden; padding: 7px 9px; color: #465249; border-bottom: 1px solid #eff1ec; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 .records-table tbody tr:last-child td { border-bottom: 0; }
 .record-row { cursor: pointer; transition: background .1s ease; }
@@ -228,11 +223,44 @@ button:disabled { cursor: not-allowed; opacity: .62; }
 .mqis-cell { color: #24362a; font-weight: 650; }
 .title-cell, .occur-place-cell, .part-group-cell, .defect-name-cell { color: #3d4a40; }
 .condition-cell { color: #a5ada4; }
+/* Ngày Pending renders empty (not 0, not an em dash) when the window no longer applies. */
 .pending-cell { color: #465249; font-variant-numeric: tabular-nums; font-weight: 650; }
-.qpn-cell { text-align: center; }
-.qpn-file-link { display: inline-flex; padding: 3px 8px; border-radius: 99px; color: #2f5f8a; background: #eaf1f8; font-size: 9px; font-weight: 750; text-decoration: none; white-space: nowrap; }
-.qpn-file-link:hover { color: #1d4468; background: #dce8f4; text-decoration: underline; }
-.qpn-file-link:focus-visible { outline: 2px solid var(--orange); outline-offset: 2px; }
+.pending-cell.pending-blank { color: transparent; }
+
+/* Compact QPN actions: one primary control plus a small overflow menu. */
+.records-table td.qpn-cell { overflow: visible; text-align: left; }
+.qpn-cell-content { position: relative; display: inline-flex; align-items: center; gap: 3px; }
+.qpn-action { display: inline-flex; align-items: center; gap: 3px; padding: 3px 7px; border: 0; border-radius: 99px; color: #2f5f8a; background: #eaf1f8; font-size: 9px; font-weight: 750; text-decoration: none; white-space: nowrap; cursor: pointer; }
+.qpn-action:hover { color: #1d4468; background: #dce8f4; }
+a.qpn-action:hover { text-decoration: underline; }
+.qpn-action:disabled { opacity: .55; cursor: progress; }
+.qpn-action:focus-visible, .qpn-more:focus-visible, .qpn-menu button:focus-visible { outline: 2px solid var(--orange); outline-offset: 2px; }
+.qpn-add { color: #39724a; background: #eaf4eb; }
+.qpn-add:hover { color: #2b5a39; background: #dcecdf; }
+.qpn-more { padding: 2px 6px; border: 0; border-radius: 99px; color: #77827a; background: #f2f5ef; font-size: 11px; line-height: 1.2; cursor: pointer; }
+.qpn-more:hover { color: #46554a; background: #e7ece3; }
+.qpn-more:disabled { opacity: .55; cursor: progress; }
+.qpn-menu { position: absolute; z-index: 20; top: calc(100% + 4px); left: 0; display: flex; flex-direction: column; min-width: 118px; padding: 4px; background: #fff; border: 1px solid #dce3d9; border-radius: 7px; box-shadow: 0 10px 24px rgb(23 35 30 / 16%); text-align: left; }
+.qpn-menu[hidden] { display: none; }
+.qpn-menu button { padding: 5px 7px; border: 0; border-radius: 5px; color: #46554a; background: transparent; font-size: 9px; font-weight: 650; text-align: left; white-space: nowrap; cursor: pointer; }
+.qpn-menu button:hover:not(:disabled) { background: #f2f5ef; }
+.qpn-menu button:disabled { opacity: .55; cursor: progress; }
+.qpn-file-input { display: none; }
+/*
+  Inline "Tên lỗi" editor. The read state reads as ordinary cell text until hovered, and it is
+  a real button so it is keyboard reachable and the row's double-click-to-open-detail rule
+  skips it. Sizes stay inside the fixed 45px row height, including the failure line.
+*/
+.inline-edit-trigger { display: block; max-width: 100%; overflow: hidden; padding: 3px 6px; border: 1px dashed transparent; border-radius: 6px; color: inherit; background: transparent; font-size: 10px; text-align: left; text-overflow: ellipsis; white-space: nowrap; cursor: text; }
+.inline-edit-trigger:hover { border-color: #d5ddd0; background: #f7faf5; }
+.inline-edit-trigger:focus-visible { border-color: #8fae8a; background: #fff; outline: 0; }
+.inline-edit-empty { color: #9aa498; }
+.inline-edit-placeholder { font-style: italic; }
+.inline-edit-input { width: 100%; padding: 3px 6px; border: 1px solid #8fae8a; border-radius: 6px; color: #24362a; background: #fff; font-size: 10px; }
+.inline-edit-input:focus { outline: 0; box-shadow: 0 0 0 2px rgb(143 174 138 / 28%); }
+.inline-edit-input:disabled { opacity: .6; cursor: progress; }
+.inline-edit-failed .inline-edit-input { border-color: #c8576a; }
+.inline-edit-error { display: block; overflow: hidden; margin-top: 1px; color: #a42e3d; font-size: 8px; line-height: 1.15; text-overflow: ellipsis; white-space: nowrap; }
 .tat-pill, .status-pill { display: inline-flex; align-items: center; max-width: 100%; overflow: hidden; padding: 4px 7px; border-radius: 99px; font-size: 9px; font-weight: 750; text-overflow: ellipsis; white-space: nowrap; }
 .tat-overdue { color: #a42e3d; background: #fbe9eb; }
 .tat-today { color: #994012; background: #fff0e7; }
