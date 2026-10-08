@@ -139,13 +139,28 @@ khoá khớp import. Đổi số này làm record **rời khỏi dòng import c�
 4. result: record 4 giữ note nhưng không nhận trạng thái mới, và hệ thống có hai record cho cùng một
    lỗi thực tế.
 
-App hiện **không phát hiện cũng không sửa được** tình trạng này, nên UI không mở đường vào nó. Hai
-bảo vệ đã có (và đã có test) khi `mgmtNo` thay đổi qua API:
+App hiện **không phát hiện cũng không sửa được** tình trạng này, nên UI không mở đường vào nó — và
+từ khoá này của record đã tạo bị chặn ở **tầng service/API**, không chỉ khoá trên UI:
 
-- **Chống trùng**: PATCH `mgmtNo` sang số của record khác → `409 duplicate-record`
-  (`assertNoDuplicate` / `recordService.updateRecord`).
-- **ID nội bộ không đổi**: `id_key` dẫn xuất từ `id`, không dẫn xuất từ số quản lý; `recordSource`
-  không đổi được qua edit; `version` vẫn tăng nên optimistic-concurrency còn tác dụng.
+- **Một quy tắc, hai chỗ gọi**: `assertManagementNumberUnchanged(existing, patch)`
+  (`src/models/defect-record.ts`) được gọi trong `updateRecord` của `server/http/app.ts` (đường
+  `PATCH /api/records/:id`, kể cả request gửi thẳng không qua UI) và trong `RecordService.updateRecord`
+  (đường IndexedDB), nên mọi caller đều phải tuân theo chứ không phải chỉ drawer.
+- **Đổi thật sự → 400** `validation-failed` với `field: 'mgmtNo'` (`RecordNormalizationError`), thông
+  báo nêu rõ hệ quả. Trước đây chỉ có `409 duplicate-record` do `assertNoDuplicate`, tức là chỉ chặn
+  được trường hợp đổi sang số của record khác; đổi sang số chưa ai dùng vẫn lọt.
+- **Gửi kèm giá trị không đổi → vẫn chấp nhận**, và `mgmtNo` bị gỡ khỏi patch trước khi ghi. Repository
+  luôn lưu toàn bộ field, nên client cũ gửi lại số hiện tại phải sống được; so sánh theo sau `trim()`
+  nên số có khoảng trắng thặng dư cũng không bị coi là đổi.
+- **Byte đang lưu không bị viết lại**: giá trị nguồn (số 0 đầu, khoảng trắng) chỉ được ghi bởi import,
+  không phải bởi một lần sửa note.
+- **Không áp dụng cho bản ghi tạo mới và import**: `POST /api/records`, import pipeline và
+  `server/migrateIndexedDb.ts` (ghi qua `context.records.update`, không qua `updateRecord` của HTTP)
+  giữ nguyên hành vi — record mới chưa có lineage để mất.
+
+Hai bảo vệ nền vẫn giữ và vẫn có test: **ID nội bộ không đổi** (`id_key` dẫn xuất từ `id`, không dẫn
+xuất từ số quản lý), `recordSource` không đổi được qua edit, `version` vẫn tăng nên
+optimistic-concurrency còn tác dụng.
 
 Quy tắc import (`IMPORT_IDENTITY_FIELDS`, whitelist `status` + `dueDate`) **giữ nguyên** — không đổi
 để "mở khoá" `mgmtNo`. Nếu sau này cần cho sửa số quản lý, hướng đúng là thêm một neo identity

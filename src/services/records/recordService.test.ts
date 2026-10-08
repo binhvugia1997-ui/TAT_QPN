@@ -118,12 +118,32 @@ describe('record service', () => {
       .toEqual([rejectedRecord.id, openRecord.id]);
   });
 
-  it('prevents an update from changing a record into another record identity', async () => {
+  it('refuses any update that changes the management number, collision or not', async () => {
     const service = makeService();
     const first = await service.addRecord({ mgmtNo: 'TNP-601', title: 'First defect' });
     const second = await service.addRecord({ mgmtNo: 'TNP-602', title: 'Second defect' });
-    await expect(service.updateRecord(second.id, { mgmtNo: 'tnp-601' })).rejects.toBeInstanceOf(DuplicateRecordError);
+
+    // This was only a DuplicateRecordError, and only for the colliding case. The service now refuses
+    // the change outright: even a number nobody else holds detaches the record from its own import
+    // row, and the orphaned record is what turns the next import into a duplicate.
+    await expect(service.updateRecord(second.id, { mgmtNo: 'tnp-601' })).rejects.toMatchObject({
+      name: 'RecordNormalizationError',
+      field: 'mgmtNo',
+    });
+    await expect(service.updateRecord(second.id, { mgmtNo: 'TNP-603' })).rejects.toMatchObject({ field: 'mgmtNo' });
     await expect(service.getRecord(second.id)).resolves.toMatchObject({ mgmtNo: 'TNP-602' });
     await expect(service.getRecord(first.id)).resolves.toMatchObject({ mgmtNo: 'TNP-601' });
+  });
+
+  it('accepts the whole-record save the app performs and leaves the stored number untouched', async () => {
+    const service = makeService();
+    const record = await service.addRecord({ mgmtNo: 'TNP-700', title: 'Spacing defect' });
+
+    // The repository expands a partial edit into every field, so every save carries `mgmtNo`. A rule
+    // that rejected the key itself would break editing; the guard drops the redundant copy instead.
+    const saved = await service.updateRecord(record.id, { mgmtNo: '  TNP-700 ', notes: 'checked' });
+
+    expect(saved.notes).toBe('checked');
+    expect(saved.mgmtNo).toBe(record.mgmtNo);
   });
 });

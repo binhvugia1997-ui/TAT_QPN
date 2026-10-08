@@ -3,7 +3,7 @@ import http from 'node:http';
 import path from 'node:path';
 import { findExistingRecord, getRecordFingerprint } from '../../src/business/duplicate/identity';
 import { getRecordIdKey } from '../../src/business/records/recordKey';
-import { RecordNormalizationError, assertRecordIdUnchanged, normalizeDefectRecord, normalizeDefectRecordPatch } from '../../src/models/defect-record';
+import { RecordNormalizationError, assertManagementNumberUnchanged, assertRecordIdUnchanged, normalizeDefectRecord, normalizeDefectRecordPatch } from '../../src/models/defect-record';
 import { buildManualRecord } from '../../src/services/records/recordService';
 import type { DefectRecord, DefectRecordPatch } from '../../src/models/defect-record';
 import type { AppContext } from '../context';
@@ -371,11 +371,15 @@ export function createHttpServer(options: HttpAppOptions): http.Server {
     if (Object.prototype.hasOwnProperty.call(patch, 'recordSource')) {
       throw new ValidationFailedError('Record provenance cannot be changed by an edit.');
     }
+    // Enforced here, not in the UI: a direct request has to obey the same rule as the drawer, and
+    // a patch that merely echoes the current number back is accepted and cleaned rather than
+    // refused, because the repository layer saves whole records.
+    const identitySafePatch = assertManagementNumberUnchanged(stored.record, patch);
     if (typeof expectedVersion !== 'number' || !Number.isInteger(expectedVersion)) {
       throw new ValidationFailedError('"expectedVersion" is required so concurrent edits cannot be overwritten silently.');
     }
 
-    const normalizedPatch = normalizeDefectRecordPatch(patch) as DefectRecordPatch;
+    const normalizedPatch = normalizeDefectRecordPatch(identitySafePatch) as DefectRecordPatch;
     const next = normalizeDefectRecord(
       { ...stored.record, ...normalizedPatch, id: stored.record.id, recordSource: stored.record.recordSource },
       stored.record.recordSource,

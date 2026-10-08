@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import legacyBaseData from '../data/legacy-base-data.json';
-import { normalizeDefectRecord } from './defect-record';
+import { RecordNormalizationError, assertManagementNumberUnchanged, normalizeDefectRecord } from './defect-record';
 
 describe('canonical legacy seed model', () => {
   it('retains every BASE_DATA field for all 191 records without mutating the read-only seed', () => {
@@ -56,5 +56,73 @@ describe('canonical legacy seed model', () => {
       sourceColumnThatHasNoScreen: 'retain this value',
     }, 'import');
     expect(normalized.sourceColumnThatHasNoScreen).toBe('retain this value');
+  });
+});
+describe('the management number guard on an existing record', () => {
+  it('leaves a patch alone when it does not mention the number', () => {
+    const patch = { status: 'Hoàn thành', notes: null };
+
+    expect(assertManagementNumberUnchanged({ mgmtNo: 'A-1' }, patch)).toBe(patch);
+  });
+
+  it('drops a carried copy that matches the stored number', () => {
+    // The repository layer saves whole records, so `mgmtNo` arrives on every legitimate edit.
+    const safe = assertManagementNumberUnchanged({ mgmtNo: 'A-1' }, { mgmtNo: 'A-1', notes: 'x' });
+
+    expect(Object.prototype.hasOwnProperty.call(safe, 'mgmtNo')).toBe(false);
+    expect(safe).toEqual({ notes: 'x' });
+  });
+
+  it('treats surrounding spacing as the same number and still refuses to write it', () => {
+    // The comparison is lenient precisely so the write is not: the padded value must never reach
+    // storage, because `mgmtNo` is stored as source text and rendered as-is.
+    const safe = assertManagementNumberUnchanged({ mgmtNo: 'A-1' }, { mgmtNo: '  A-1  ' });
+
+    expect(safe).toEqual({});
+  });
+
+  it('returns a new object rather than mutating the caller patch', () => {
+    const patch = { mgmtNo: 'A-1', notes: 'x' };
+    const safe = assertManagementNumberUnchanged({ mgmtNo: 'A-1' }, patch);
+
+    expect(safe).not.toBe(patch);
+    expect(patch.mgmtNo).toBe('A-1');
+  });
+
+  it('refuses a real change, including a blanking or a case-only rewrite', () => {
+    for (const value of ['A-2', '', null, 'a-1-x', undefined]) {
+      expect(() => assertManagementNumberUnchanged({ mgmtNo: 'A-1' }, { mgmtNo: value })).toThrow(
+        /cannot be changed/u,
+      );
+    }
+  });
+
+  it('reports the field so the HTTP layer can answer with a machine-readable 400', () => {
+    let caught: unknown;
+    try {
+      assertManagementNumberUnchanged({ mgmtNo: 'A-1' }, { mgmtNo: 'A-2' });
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(RecordNormalizationError);
+    expect((caught as { field: string }).field).toBe('mgmtNo');
+    // The message names the consequence, not just the rule, so an operator can act on it.
+    expect((caught as { message: string }).message).toMatch(/duplicate|import/u);
+  });
+
+  it('rejects a non-text number the same way the normalizer would', () => {
+    expect(() => assertManagementNumberUnchanged({ mgmtNo: 'A-1' }, { mgmtNo: { nested: 1 } })).toThrow(
+      /Expected text for mgmtNo/u,
+    );
+  });
+
+  it('compares against an empty stored number without inventing one', () => {
+    // A legacy row can carry a blank number; echoing the blank is not a change.
+    expect(assertManagementNumberUnchanged({ mgmtNo: '' }, { mgmtNo: null })).toEqual({});
+    expect(assertManagementNumberUnchanged({ mgmtNo: null }, { mgmtNo: '' })).toEqual({});
+    expect(() => assertManagementNumberUnchanged({ mgmtNo: undefined }, { mgmtNo: 'B-1' })).toThrow(
+      /cannot be changed/u,
+    );
   });
 });

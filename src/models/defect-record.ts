@@ -244,3 +244,43 @@ export function assertRecordIdUnchanged(id: RecordId, patch: Record<string, unkn
     throw new RecordNormalizationError('Record identity cannot be changed.', 'id');
   }
 }
+
+/**
+ * The Management Number is the key a record is matched on when data is imported
+ * (`getRecordFingerprint`), so for a record that already exists it is not an editable field.
+ * Renaming it detaches the record from its own source row: the next import of that row no longer
+ * finds it and is inserted as a second record, with the local corrections stranded behind.
+ *
+ * An update may still *carry* `mgmtNo`, because full-record writers (the repository layer, and any
+ * older client) send every field on every save. A carried copy that matches what is stored is
+ * therefore dropped from the patch rather than written: the stored bytes, including any leading
+ * zero or spacing the source system produced, are never rewritten. Only a real change is refused,
+ * so this cannot break a client that round-trips the whole record.
+ *
+ * Returns the patch to apply. Throwing `RecordNormalizationError` is deliberate: the HTTP layer
+ * already maps that to 400 with the field name, so the rejection is machine-readable too.
+ */
+export function assertManagementNumberUnchanged(
+  existing: { mgmtNo?: unknown },
+  patch: Record<string, unknown>,
+): Record<string, unknown> {
+  if (!Object.prototype.hasOwnProperty.call(patch, 'mgmtNo')) return patch;
+
+  const incoming = (normalizeString(patch.mgmtNo, 'mgmtNo') ?? '').trim();
+  const stored = (normalizeString(existing.mgmtNo, 'mgmtNo') ?? '').trim();
+  if (incoming === stored) {
+    const safe: Record<string, unknown> = {};
+    for (const [field, value] of Object.entries(patch)) {
+      if (field === 'mgmtNo') continue;
+      safe[field] = value;
+    }
+    return safe;
+  }
+
+  throw new RecordNormalizationError(
+    'The Management Number identifies this record to the import and cannot be changed. '
+    + 'Editing it would leave the record unmatched, so the next import of the same row would create '
+    + 'a duplicate; correct the number in the source system instead.',
+    'mgmtNo',
+  );
+}
