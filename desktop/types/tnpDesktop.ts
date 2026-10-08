@@ -96,6 +96,38 @@ export interface TnpUpdateState {
   source: string | null;
 }
 
+/**
+ * The Settings-side answer to "is this update folder right?" — a re-declaration of the main
+ * process result, kept as plain data because the page must not import Node-typed modules.
+ */
+export interface TnpUpdateSourceValidation {
+  state:
+    | 'not-configured'
+    | 'unreachable'
+    | 'not-readable'
+    | 'read-only'
+    | 'no-manifest'
+    | 'invalid-manifest'
+    | 'ready';
+  source: string;
+  message: string;
+  usable: boolean;
+  manifest: { version: string; build: number; channel: string; package: string } | null;
+  channelMatches: boolean | null;
+  checkedAt: string;
+}
+
+/** What this installation actually is, so a published build can be recognised as already running. */
+export interface TnpDesktopUpdateSummary {
+  installed: { version: string; build: number } | null;
+  channel: string;
+  checksEnabled: boolean;
+  /** The folder the updater resolved, i.e. what it will really read, not what was typed. */
+  resolvedSource: string | null;
+  /** False in a development checkout, where no update folder can be used at all. */
+  updateCapable: boolean;
+}
+
 export interface TnpDesktopState {
   server: TnpDesktopServerSummary;
   status: Record<string, unknown> | null;
@@ -103,6 +135,12 @@ export interface TnpDesktopState {
   layout: TnpDesktopLayoutSummary;
   settings: TnpDesktopSettings;
   security: { authentication: boolean; tls: boolean; warning: string };
+  /**
+   * Present only in the desktop build. Deliberately computed without touching the filesystem: a
+   * dead share can take seconds to time out, and this state is read on every panel open and
+   * refresh. Validating a source is therefore a separate, explicit call.
+   */
+  update?: TnpDesktopUpdateSummary;
 }
 
 export interface TnpPickResult {
@@ -135,7 +173,13 @@ export interface TnpDesktopBridge {
   installUpdate(): Promise<{ started: boolean }>;
   /** [Later]: do not offer this build again until TNP is restarted. */
   dismissUpdate(): Promise<{ dismissed: boolean }>;
+  /**
+   * Saves the folder and reports what was stored — the normalised value, which can differ from what
+   * was typed (a trailing separator, `/` instead of a backslash).
+   */
   setUpdateSource(source: string): Promise<{ source: string; state: TnpUpdateState }>;
+  /** Reads the folder and reports whether an update could actually be installed from it. */
+  validateUpdateSource(source: string): Promise<TnpUpdateSourceValidation>;
   /** Subscribes to updater state pushes; returns the unsubscribe function. */
   onUpdateState(listener: (state: TnpUpdateState) => void): () => void;
 }

@@ -3,6 +3,10 @@ import {
   serializeColumnPreference,
 } from '../../business/records/columnVisibility';
 import type { RecordsTableColumnKey } from '../../business/records/recordsTable';
+import { browserStorage } from './preferenceStorage';
+import type { PreferenceStorage } from './preferenceStorage';
+
+export type { PreferenceStorage };
 
 /**
  * Per-client storage for the Records column choice.
@@ -15,26 +19,9 @@ import type { RecordsTableColumnKey } from '../../business/records/recordsTable'
 
 export const RECORDS_COLUMN_STORAGE_KEY = 'tnp.records.visibleColumns';
 
-/** Minimal storage surface, so tests and non-browser runtimes can inject their own. */
-export interface PreferenceStorage {
-  getItem(key: string): string | null;
-  setItem(key: string, value: string): void;
-  removeItem(key: string): void;
-}
-
-function defaultStorage(): PreferenceStorage | null {
-  if (typeof window === 'undefined') return null;
-  try {
-    return window.localStorage;
-  } catch {
-    // Storage can throw when it is disabled or blocked (private mode, locked profile).
-    return null;
-  }
-}
-
 /** Reads the saved column choice, falling back to the default when it is unusable. */
 export function loadVisibleColumns(
-  storage: PreferenceStorage | null = defaultStorage(),
+  storage: PreferenceStorage | null = browserStorage(),
   available?: readonly RecordsTableColumnKey[],
 ): ReadonlySet<RecordsTableColumnKey> {
   const fallback = normalizeVisibleColumns(null, available);
@@ -61,7 +48,7 @@ export function loadVisibleColumns(
  */
 export function saveVisibleColumns(
   visible: ReadonlySet<RecordsTableColumnKey>,
-  storage: PreferenceStorage | null = defaultStorage(),
+  storage: PreferenceStorage | null = browserStorage(),
   available?: readonly RecordsTableColumnKey[],
 ): void {
   if (!storage) return;

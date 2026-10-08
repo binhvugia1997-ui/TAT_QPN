@@ -3,6 +3,7 @@ import type { Locale } from '../i18n';
 import { translate } from '../i18n';
 import type { DefectRecord } from '../models/defect-record';
 import { LEGACY_STATUS_VALUES } from '../business/status/status';
+import { MANUAL_INLINE_FIELDS, MQIS_DISPLAY_FIELD, canonicalCodeText, isManualInlineField } from '../business/records/recordsTable';
 import { recordService, serverApi } from '../app/services';
 import { RecordConflictError } from '../services/server/apiClient';
 import { getDesktopBridge } from '../services/desktop/desktopBridge';
@@ -19,13 +20,18 @@ interface EditableFields {
   status: string;
   dueDate: string;
   completedDate: string;
-  mqisCode: string;
   pic: string;
   notes: string;
   caFileLink: string;
 }
 
-const EDITABLE_FIELDS = new Set(['status', 'dueDate', 'completedDate', 'mqisCode', 'pic', 'notes', 'caFileLink']);
+/**
+ * The fields the drawer may write. `mqisCode` is deliberately absent: the MQIS column is the
+ * record's Management Number (`mgmtNo`), and a second, independent "MQIS code" input is what
+ * made the two disagree about which number a record has. It also stops a save from rewriting a
+ * legacy `mqisCode` — the old form sent `''` for a `null` value on every unrelated edit.
+ */
+const EDITABLE_FIELDS = new Set(['status', 'dueDate', 'completedDate', 'pic', 'notes', 'caFileLink']);
 
 function fieldLabel(value: string): string {
   return value
@@ -53,7 +59,6 @@ function initialEditableFields(record: DefectRecord): EditableFields {
     status: record.status ?? '',
     dueDate: record.dueDate ?? '',
     completedDate: record.completedDate ?? '',
-    mqisCode: record.mqisCode ?? '',
     pic: record.pic ?? '',
     notes: record.notes ?? '',
     caFileLink: record.caFileLink ?? '',
@@ -128,9 +133,29 @@ export default function RecordDetailDrawer({ locale, record, onClose, onSaved }:
     };
   }, []);
 
+  // One expression for the number the MQIS column shows, so the table and this drawer cannot
+  // disagree about which field carries it or how a blank is rendered.
+  const managementNumber = canonicalCodeText(current[MQIS_DISPLAY_FIELD]);
+
+  // "Source data" means *what the import brought in*. The two manual columns are excluded for the
+  // same reason `recordSource` and `version` are: they are this app's own bookkeeping, and showing
+  // an operator's inline edit among the imported fields implies a provenance the value does not
+  // have — the reader cannot tell a typed defect name from one that arrived in the spreadsheet.
   const sourceFields = useMemo(() => Object.entries(current)
-    .filter(([key]) => !EDITABLE_FIELDS.has(key) && key !== 'recordSource' && key !== 'version')
+    .filter(([key]) => !EDITABLE_FIELDS.has(key)
+      && key !== 'recordSource'
+      && key !== 'version'
+      // Shown above under its own label; a second copy here is where the two start to disagree.
+      && key !== MQIS_DISPLAY_FIELD
+      && !isManualInlineField(key))
     .sort(([left], [right]) => left.localeCompare(right)), [current]);
+
+  // The two inline columns are edited in the table, so the drawer only reports them — and reports
+  // them here rather than in the source list above, because where a value is shown is what tells the
+  // reader whether it came from the import or from a keyboard on this PC.
+  const manualFields = useMemo(() => MANUAL_INLINE_FIELDS
+    .map((field) => [field, current[field] ?? ''] as const)
+    .filter(([, value]) => String(value).trim() !== ''), [current]);
 
   const update = (field: keyof EditableFields, value: string) => {
     setForm((currentForm) => ({ ...currentForm, [field]: value }));
@@ -155,7 +180,6 @@ export default function RecordDetailDrawer({ locale, record, onClose, onSaved }:
         status: form.status,
         dueDate: form.dueDate || null,
         completedDate: form.completedDate || null,
-        mqisCode: form.mqisCode,
         pic: form.pic,
         notes: form.notes,
         caFileLink: form.caFileLink,
@@ -294,7 +318,7 @@ export default function RecordDetailDrawer({ locale, record, onClose, onSaved }:
       <aside className="detail-drawer" role="dialog" aria-modal="true" aria-labelledby="detail-title">
         <header className="drawer-header">
           <div>
-            <p className="page-eyebrow">{record.mgmtNo || `#${String(record.id)}`}</p>
+            <p className="page-eyebrow">{managementNumber ?? `#${String(record.id)}`}</p>
             <h2 id="detail-title">{translate(locale, 'detailTitle')}</h2>
             <p className="drawer-record-title">{record.title || record.defectDetails || translate(locale, 'untitled')}</p>
           </div>
@@ -321,10 +345,22 @@ export default function RecordDetailDrawer({ locale, record, onClose, onSaved }:
                 <input type="date" value={form.completedDate} onChange={(event) => update('completedDate', event.target.value)} />
               </label>
             </div>
+            {/* Read-only by decision, not by omission. `mgmtNo` is the key the import matches
+                on (see `getRecordFingerprint`), so editing it detaches the record from its own
+                lineage: the next import of the same row no longer matches it and is inserted as a
+                second record, with the local corrections stranded on the first. */}
             <label className="field-control">
-              <span>{translate(locale, 'mqisCodeField')}</span>
-              <input type="text" value={form.mqisCode} onChange={(event) => update('mqisCode', event.target.value)} />
+              <span>{translate(locale, 'mgmtNoField')}</span>
+              {/* `readOnly` rather than `disabled`: the value is copyable and announced, and a
+                  disabled control reads as a broken field rather than a deliberately locked one. */}
+              <input
+                type="text"
+                value={managementNumber ?? ''}
+                readOnly
+                title={translate(locale, 'mgmtNoLockedHelp')}
+              />
             </label>
+            <p className="hint">{translate(locale, 'mgmtNoLockedHelp')}</p>
             <h3>{translate(locale, 'correctiveFollowUp')}</h3>
             <label className="field-control">
               <span>{translate(locale, 'picField')}</span>
@@ -384,6 +420,21 @@ export default function RecordDetailDrawer({ locale, record, onClose, onSaved }:
             )}
             <small>{translate(locale, 'reportHelp')}</small>
           </section>
+
+          {manualFields.length > 0 && (
+            <section className="manual-entry-section">
+              <h3>{translate(locale, 'manualEntriesTitle')}</h3>
+              <dl className="source-field-list">
+                {manualFields.map(([key, value]) => (
+                  <div className="source-field-row" key={key}>
+                    <dt>{fieldLabel(key)}</dt>
+                    <dd>{displayValue(value)}</dd>
+                  </div>
+                ))}
+              </dl>
+              <small>{translate(locale, 'manualEntriesHelp')}</small>
+            </section>
+          )}
 
           <details className="source-details">
             <summary>{translate(locale, 'sourceData')} · {sourceFields.length}</summary>

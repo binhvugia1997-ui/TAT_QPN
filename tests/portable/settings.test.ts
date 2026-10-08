@@ -107,6 +107,37 @@ describe('the update source settings', () => {
     expect(normalizeSettings({ updateSource: 42 }).updateSource).toBe('');
   });
 
+  it('stores an update source exactly as the publisher wrote it, normalised only in shape', () => {
+    // The value a client reads must be the value a publisher wrote, byte for byte, or the two
+    // disagree about the same share and the symptom is "unreachable" against a fine folder.
+    const spaced = '\\\\192.168.103.12\\ReportExtractor_Update\\TAT QPN\\updates';
+    expect(normalizeSettings({ updateSource: spaced }).updateSource).toBe(spaced);
+    expect(normalizeSettings({ updateSource: spaced + '  ' }).updateSource).toBe(spaced);
+
+    // Separators and a trailing separator are cosmetic and are tidied, because a mixed-separator
+    // path is what pasting out of an Explorer address bar produces.
+    expect(normalizeSettings({ updateSource: '//file-server/TAT QPN Share/updates/' }).updateSource)
+      .toBe('\\\\file-server\\TAT QPN Share\\updates');
+    expect(normalizeSettings({ updateSource: '\\\\PC\\\\share\\\\\\\\updates' }).updateSource)
+      .toBe('\\\\PC\\share\\updates');
+
+    // Case is left alone: Windows matches these names case-insensitively, and rewriting what the
+    // operator typed is how a setting starts to look like it is being ignored.
+    expect(normalizeSettings({ updateSource: '\\\\BUILD-PC\\TNP_Update\\Test' }).updateSource)
+      .toBe('\\\\BUILD-PC\\TNP_Update\\Test');
+
+    // Idempotent, so reading a file back never changes it again on the next save.
+    const once = normalizeSettings({ updateSource: '//PC/share/updates/' }).updateSource;
+    expect(normalizeSettings({ updateSource: once }).updateSource).toBe(once);
+  });
+
+  it('keeps a local folder usable as an update source, because tests and dry runs need one', () => {
+    expect(normalizeSettings({ updateSource: '/tmp/tnp-updates/' }).updateSource).toBe('/tmp/tnp-updates');
+    expect(normalizeSettings({ updateSource: 'C:\\TAT QPN\\updates' }).updateSource).toBe('C:\\TAT QPN\\updates');
+    // Not a path at all is still not turned into something else.
+    expect(normalizeSettings({ updateSource: '   ' }).updateSource).toBe('');
+  });
+
   it('falls back to the test channel for anything that is not a simple identifier', () => {
     expect(normalizeSettings({ updateChannel: 'production' }).updateChannel).toBe('production');
     expect(normalizeSettings({ updateChannel: 'TEST' }).updateChannel).toBe('test');

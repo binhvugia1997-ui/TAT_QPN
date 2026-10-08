@@ -347,6 +347,20 @@ async function boot(): Promise<void> {
       return settings;
     },
     restartServer,
+    // Read lazily: the bridge is registered before the updater exists, and in a development checkout
+    // there is no updater at all. The panel must then say "not available" rather than show an empty
+    // version field that reads like a broken install.
+    getUpdateSummary: () => {
+      if (!updater) return undefined;
+      const current = settings as DesktopSettings;
+      return {
+        installed: { version: updater.local.version, build: updater.local.build },
+        channel: current.updateChannel,
+        checksEnabled: current.updateChecksEnabled,
+        resolvedSource: updater.resolvedSource(),
+        updateCapable: true,
+      };
+    },
   });
 
   registerUpdater();

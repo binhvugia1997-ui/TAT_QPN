@@ -277,6 +277,9 @@ function verifyPackage(target) {
     'resources/app/dist/desktop/preload/preload.js',
     // The desktop main process requires this from ../../server/, so it must travel with it.
     'resources/app/dist/server/startupSignals.js',
+    // The shared UNC rule the desktop normalises a configured update source with. The desktop
+    // compiles src/utils/uncPath.ts into its own output root for exactly this reason.
+    'resources/app/dist/src/utils/uncPath.js',
     'resources/app/server-runtime/server/index.js',
     'resources/app/server-runtime/package.json',
     'resources/app/seed/legacy-base-data.json',

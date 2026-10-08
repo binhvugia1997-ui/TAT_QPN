@@ -1,5 +1,5 @@
 import { findExistingRecord, getRecordFingerprint } from '../../business/duplicate/identity';
-import { normalizeDefectRecord, normalizeDefectRecordPatch, assertRecordIdUnchanged } from '../../models/defect-record';
+import { assertManagementNumberUnchanged, normalizeDefectRecord, normalizeDefectRecordPatch, assertRecordIdUnchanged } from '../../models/defect-record';
 import type { DefectRecord, DefectRecordPatch, RecordId } from '../../models/defect-record';
 import { todayDateOnly } from '../../utils/date';
 import { createRecordId } from '../../utils/id';
@@ -113,7 +113,9 @@ export class RecordService {
     }
     const existing = await this.repository.getRecord(id);
     if (!existing) throw new RecordNotFoundError(id);
-    const patch = normalizeDefectRecordPatch(rawPatch) as DefectRecordPatch;
+    // Same rule as the HTTP route, applied one layer down as well: every caller of the service is
+    // bound by it, not only the ones that happen to go through the server.
+    const patch = normalizeDefectRecordPatch(assertManagementNumberUnchanged(existing, rawPatch)) as DefectRecordPatch;
     const updated = normalizeDefectRecord(
       { ...existing, ...patch, id: existing.id, recordSource: existing.recordSource },
       existing.recordSource,

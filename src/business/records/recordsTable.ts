@@ -2,6 +2,7 @@ import type { DefectRecord } from '../../models/defect-record';
 import type { MessageKey } from '../../i18n';
 import type { DateOnly } from '../../utils/date';
 import { isDateOnly } from '../../utils/date';
+import { naturalTextCompare } from '../../utils/naturalCompare';
 import { getPendingDays, getTatDueDate } from '../tat/tat';
 import { getRecordIdKey } from './recordKey';
 
@@ -33,8 +34,9 @@ export type RecordsTableColumnKey =
 
 /**
  * Columns that have an orderable source value. `no` is a rendered row sequence,
- * `condition` has no verified source field, `qpn` is a file link and `caLink` is a
- * workspace-only badge, so none of those are sortable.
+ * `qpn` is a file link and `caLink` is a workspace-only badge, so none of those are
+ * sortable. `condition` is app-managed free text rather than a source field, so it stays
+ * out of the approved sort set.
  */
 export type RecordsTableSortableColumn = Exclude<RecordsTableColumnKey, 'no' | 'condition' | 'qpn' | 'caLink'>;
 
@@ -80,11 +82,82 @@ export function getVisibleRecordsColumns(mode: { corrective: boolean }): readonl
   return RECORDS_TABLE_COLUMNS.filter(({ correctiveOnly }) => !correctiveOnly || mode.corrective);
 }
 
+/**
+ * The field the MQIS column displays: the canonical Management Number.
+ *
+ * Named once and exported so the cell mapping, the row component, the search haystack and
+ * the tests cannot drift apart. It is a *display* binding only — record identity matching,
+ * the import whitelist and the SQLite schema are untouched, and no new database field is
+ * introduced: `mgmtNo` is already stored in its own column and in the record payload.
+ *
+ * The value is handed through as text, so a stored number keeps every leading zero and its
+ * original formatting; nothing parses or re-serialises it as a number.
+ */
+export const MQIS_COLUMN: RecordsTableColumnKey = 'mqis';
+export const MQIS_DISPLAY_FIELD = 'mgmtNo' as const;
+
+/**
+ * The "Tên lỗi" column and the app-managed field behind it. Exported so the row component,
+ * the save handler, and the tests all name the manual field in one place.
+ */
+export const MANUAL_DEFECT_NAME_COLUMN: RecordsTableColumnKey = 'defectName';
+export const MANUAL_DEFECT_NAME_FIELD = 'manualDefectName' as const;
+
+/**
+ * The "Tình trạng" column and its app-managed field. `manualCondition` exists so the
+ * operator can record a condition by hand without disturbing the canonical TNP `status`,
+ * which drives Approval, Completed/Rejected scoping and TAT. Like `manualDefectName` it is
+ * outside the import whitelist, so an Excel re-import can never overwrite it.
+ */
+export const MANUAL_CONDITION_COLUMN: RecordsTableColumnKey = 'condition';
+export const MANUAL_CONDITION_FIELD = 'manualCondition' as const;
+
+/** The app-managed manual fields editable inline in the Records table. */
+export const MANUAL_INLINE_FIELDS = [MANUAL_DEFECT_NAME_FIELD, MANUAL_CONDITION_FIELD] as const;
+export type ManualInlineField = (typeof MANUAL_INLINE_FIELDS)[number];
+
+/** True when `field` is one of the Records table's app-managed inline manual fields. */
+export function isManualInlineField(field: string): field is ManualInlineField {
+  return (MANUAL_INLINE_FIELDS as readonly string[]).includes(field);
+}
+
 function text(value: unknown): string | null {
-  if (typeof value !== 'string') return null;
+  if (typeof value === 'string') return trimToNull(value);
+  if (typeof value === 'number') return numberToCanonicalText(value);
+  return null;
+}
+
+function trimToNull(value: string): string | null {
   const trimmed = value.trim();
   return trimmed ? trimmed : null;
 }
+
+/**
+ * Renders a numeric source value as canonical text without going through any numeric
+ * round-trip that could drop information. A stored number is already lossless here; a
+ * string is returned untouched, so leading zeros survive.
+ */
+function numberToCanonicalText(value: number): string | null {
+  if (!Number.isFinite(value)) return null;
+  return String(value);
+}
+
+/**
+ * Canonical display text for an identity-style code (the MQIS column).
+ *
+ * Accepted shapes are strings and finite numbers only. Anything else — objects, arrays,
+ * booleans — is treated as absent rather than stringified, so a malformed value can never
+ * render `[object Object]` in a column the operator reads as a record number. Leading zeros
+ * and inner spacing of a stored string are preserved exactly: the only transformation is
+ * trimming outer whitespace.
+ */
+export function canonicalCodeText(value: unknown): string | null {
+  if (typeof value === 'string') return value.trim() ? value : null;
+  if (typeof value === 'number') return numberToCanonicalText(value);
+  return null;
+}
+
+export { naturalTextCompare };
 
 function dateOnly(value: unknown): DateOnly | null {
   return typeof value === 'string' && value ? value : null;
@@ -96,8 +169,8 @@ function dateOnly(value: unknown): DateOnly | null {
  *
  * - `no` is never sourced from data: the caller renders the row sequence.
  * - `qpn` is answered by `findAttachedReport`, not by a record field.
- * - `condition` has no verified source field, so it always returns `null` and the table
- *   shows "—". No value is invented or derived for it.
+ * - `mqis` shows the canonical Management Number, not the optional `mqisCode` extension.
+ * - `condition` shows the app-manual `manualCondition`, never the Approval status.
  * - `tatSystem` uses the effective TAT deadline (source dueDate, else registeredDate + 7).
  * - `pendingDays` is derived only from registeredDate and never reads dueDate.
  */
@@ -108,7 +181,10 @@ export function getRecordCellSource(
 ): string | number | null {
   switch (column) {
     case 'no': return null;
-    case 'mqis': return text(record.mqisCode);
+    // MQIS is the record's canonical Management Number. The separate `mqisCode` extension
+    // field is deliberately NOT the display source: it is unpopulated for every seeded
+    // record, which is what made this column render "—" on rows that do have a number.
+    case 'mqis': return canonicalCodeText(record[MQIS_DISPLAY_FIELD]);
     case 'registeredDate': return dateOnly(record.registeredDate);
     case 'pic': return text(record.pic);
     case 'approval': return text(record.status);
@@ -118,20 +194,14 @@ export function getRecordCellSource(
     case 'partGroup': return text(record.partGroup);
     // "Tên lỗi" is the app-managed manual value, never the imported `defectDetails`.
     case 'defectName': return text(record.manualDefectName);
-    case 'condition': return null;
+    // "Tình trạng" is app-managed and independent of the canonical Approval/status value.
+    case 'condition': return text(record.manualCondition);
     case 'qpn': return null;
     case 'tatSystem': return getTatDueDate(record);
     case 'pendingDays': return getPendingDays(record, today);
     case 'caLink': return text(record.caFileLink);
   }
 }
-
-/**
- * The "Tên lỗi" column and the app-managed field behind it. Exported so the row component,
- * the save handler, and the tests all name the manual field in one place.
- */
-export const MANUAL_DEFECT_NAME_COLUMN: RecordsTableColumnKey = 'defectName';
-export const MANUAL_DEFECT_NAME_FIELD = 'manualDefectName' as const;
 
 /** True when the effective TAT deadline came from the source TNP dueDate, not the 7-day fallback. */
 export function hasSourceTatDeadline(record: DefectRecord): boolean {

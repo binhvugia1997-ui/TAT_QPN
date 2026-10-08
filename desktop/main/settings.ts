@@ -8,6 +8,7 @@
  */
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { normalizeUpdateSource } from '../../src/utils/uncPath';
 
 export const DEFAULT_PORT = 8787;
 const MIN_PORT = 1024;
@@ -93,8 +94,11 @@ export function normalizeSettings(input: unknown): DesktopSettings {
     port: Number.isInteger(port) && port >= MIN_PORT && port <= MAX_PORT ? port : DEFAULT_PORT,
     workstationLabel: label.trim().slice(0, 60),
     // An update source is a path, so it is trimmed and length-bounded but otherwise opaque:
-    // UNC paths legitimately start with backslashes.
-    updateSource: updateSource.trim().slice(0, 500),
+    // UNC paths legitimately start with backslashes, and every one of them is stored here with
+    // its separators normalised (single runs, no trailing separator, `/` folded to `\`). That
+    // normalisation is the shared `normalizeUpdateSource` rule rather than a local trim, so the
+    // value a publisher writes and the value a client reads cannot disagree about the same share.
+    updateSource: normalizeUpdateSource(updateSource).slice(0, 500),
     updateChannel: /^[a-z0-9-]{1,32}$/u.test(channel.trim()) ? channel.trim() : DEFAULT_UPDATE_CHANNEL,
     // Absent means enabled; only an explicit false switches the check off.
     updateChecksEnabled: source.updateChecksEnabled !== false,

@@ -72,7 +72,7 @@ Các field sau không có trong 34 field BASE_DATA nhưng `IMPORT_HEADER_MAP`, U
 
 | Field | Ý nghĩa/nguồn | Kiểu | Editable/dùng trong legacy |
 |---|---|---|---|
-| `mqisCode` | Mã MQIS; import aliases hoặc nhập tay | string \\| null | Inline Records/Rejected, drawer; search, Home reject list, export |
+| `mqisCode` | Mã MQIS kế thừa (import aliases); **không còn là ô nhập MQIS riêng** — xem C1 | string \| null | chỉ đọc: khối "Source and other record fields" của drawer; search, Home reject list, export |
 | `pic` | Người phụ trách do người dùng gán | string \\| null | Inline Records/Rejected, drawer; không import từ TNP map |
 | `caFileLink` | URL/đường dẫn file corrective action | string \\| null | Inline Records/Rejected, drawer, copy/open; export |
 | `notes` | Ghi chú theo dõi cục bộ | string \\| null | Inline Records/Rejected, drawer; export |
@@ -85,7 +85,7 @@ Các field sau không có trong 34 field BASE_DATA nhưng `IMPORT_HEADER_MAP`, U
 
 Trong BASE_DATA, `supplier`, `vendorGroup`, `no`, `writtenBy`, các cờ nguồn và nhiều trường khác được giữ dù không hiển thị. Import map có thêm các field trên; chỉ header nhận diện được mới được lưu. Các header hoàn toàn không nhận diện hiện bị bỏ qua.
 
-**Editable hiện tại:** Drawer sửa `status`, `dueDate`, `completedDate`, `notes`, `pic`, `caFileLink`, `mqisCode`. Bảng Records/Rejected inline sửa `mqisCode`, `pic`, `caFileLink`, `notes`. Các trường còn lại có trong form “New defect” chỉ được nhập lúc tạo record; không có chế độ sửa phần thông tin gốc trong drawer. Import lại có thể cập nhật bất kỳ field nào được map và có trong dòng nhập, trừ `id`.
+**Editable hiện tại:** Drawer sửa `status`, `dueDate`, `completedDate`, `notes`, `pic`, `caFileLink` — `mqisCode` đã bỏ khỏi form (xem C1), còn `mgmtNo` hiển thị chỉ đọc. Bảng Records/Rejected sửa inline `manualDefectName` và `manualCondition`; import lại không ghi đè hai field này vì whitelist sync chỉ có `status` và `dueDate`. Các trường còn lại chỉ được nhập lúc tạo record; không có chế độ sửa phần thông tin gốc trong drawer.
 
 ### B3. Field map import
 
@@ -110,6 +110,72 @@ return ['fp', record.registeredDate, record.plant, record.partCode, record.title
 Ưu tiên **Management Number** sau trim + lowercase; nếu trống thì dùng composite theo đúng thứ tự `registeredDate + plant + partCode + title + defectQty` (có tiền tố `fp`). Không dùng `id`, `no`, MQIS, status hay due date để nhận diện. Với fallback, `0` và blank đều thành chuỗi rỗng do `v || ''`; dấu `|` trong dữ liệu không escape nên có thể tạo collision.
 
 `buildRecordIndex()` thêm BASE_DATA đã merge override rồi thêm `newRecords` vào `Map`; nếu nhiều record trùng fingerprint thì record đưa vào sau thay record trước trong index. Trong import một batch, fingerprint của record mới được index ngay để dòng lặp sau không insert lần nữa. Match thì cập nhật field-by-field, không đổi `id`; nhiều dòng cùng identity có thể cập nhật nối tiếp (dòng/file xử lý sau thắng). Dữ liệu người dùng như notes/PIC/file link còn nguyên nếu không có field đó trong dòng import.
+
+### C1. Quyết định đã chốt: cột MQIS là `mgmtNo`
+
+Cột **MQIS** trong bảng Records và ô **Management Number (MQIS)** trong Detail Drawer đọc **cùng một
+field**: `MQIS_DISPLAY_FIELD = 'mgmtNo'`, qua **cùng một hàm** `canonicalCodeText` (giữ nguyên chuỗi
+đã lưu, không cắt số 0 đầu, không parse số). Vì vậy hai chỗ không thể hiển thị hai giá trị khác nhau
+cho cùng một record.
+
+`mqisCode` **không** phải là trường nhập MQIS độc lập nữa:
+
+- Nó là cột mở rộng kế thừa, rỗng trên toàn bộ 191 record seed, nên từng khiến cột MQIS hiển thị `—`
+  dù record có số quản lý.
+- Để nó tồn tại song song với `mgmtNo` nghĩa là hai số cùng được gọi là "MQIS" của một record.
+- Form cũ còn gửi `mqisCode: record.mqisCode ?? ''`, nên mỗi lần lưu một field không liên quan đều
+  ghi đè giá trị `null` kế thừa thành chuỗi rỗng. Bỏ input này khỏi form là hết.
+
+`mqisCode` vẫn nằm nguyên trong schema, vẫn là dữ liệu import (header `mqis code`, `mqis no`,
+`mqis number`, `mqis`), vẫn tìm kiếm được, vẫn xuất ra CSV, và vẫn hiện trong khối "Source and other
+record fields" của drawer — chỉ là không còn ô nhập riêng.
+
+**Vì sao `mgmtNo` chỉ đọc trong Drawer (không phải chưa làm xong).** Fingerprint dùng `mgmtNo` làm
+khoá khớp import. Đổi số này làm record **rời khỏi dòng import của chính nó**:
+
+1. record 4 đang có `MN-A`, người dùng sửa note (dữ liệu local, hợp lệ);
+2. ai đó đổi `MN-A` → `MN-B` (không trùng ai nên kiểm tra trùng không bắt được);
+3. lần import sau vẫn mang `MN-A` → không khớp record 4 → **insert thêm một record**;
+4. result: record 4 giữ note nhưng không nhận trạng thái mới, và hệ thống có hai record cho cùng một
+   lỗi thực tế.
+
+App hiện **không phát hiện cũng không sửa được** tình trạng này, nên UI không mở đường vào nó — và
+từ khoá này của record đã tạo bị chặn ở **tầng service/API**, không chỉ khoá trên UI:
+
+- **Một quy tắc, hai chỗ gọi**: `assertManagementNumberUnchanged(existing, patch)`
+  (`src/models/defect-record.ts`) được gọi trong `updateRecord` của `server/http/app.ts` (đường
+  `PATCH /api/records/:id`, kể cả request gửi thẳng không qua UI) và trong `RecordService.updateRecord`
+  (đường IndexedDB), nên mọi caller đều phải tuân theo chứ không phải chỉ drawer.
+- **Đổi thật sự → 400** `validation-failed` với `field: 'mgmtNo'` (`RecordNormalizationError`), thông
+  báo nêu rõ hệ quả. Trước đây chỉ có `409 duplicate-record` do `assertNoDuplicate`, tức là chỉ chặn
+  được trường hợp đổi sang số của record khác; đổi sang số chưa ai dùng vẫn lọt.
+- **Gửi kèm giá trị không đổi → vẫn chấp nhận**, và `mgmtNo` bị gỡ khỏi patch trước khi ghi. Repository
+  luôn lưu toàn bộ field, nên client cũ gửi lại số hiện tại phải sống được; so sánh theo sau `trim()`
+  nên số có khoảng trắng thặng dư cũng không bị coi là đổi.
+- **Byte đang lưu không bị viết lại**: giá trị nguồn (số 0 đầu, khoảng trắng) chỉ được ghi bởi import,
+  không phải bởi một lần sửa note.
+- **Không áp dụng cho bản ghi tạo mới và import**: `POST /api/records`, import pipeline và
+  `server/migrateIndexedDb.ts` (ghi qua `context.records.update`, không qua `updateRecord` của HTTP)
+  giữ nguyên hành vi — record mới chưa có lineage để mất.
+
+Hai bảo vệ nền vẫn giữ và vẫn có test: **ID nội bộ không đổi** (`id_key` dẫn xuất từ `id`, không dẫn
+xuất từ số quản lý), `recordSource` không đổi được qua edit, `version` vẫn tăng nên
+optimistic-concurrency còn tác dụng.
+
+Quy tắc import (`IMPORT_IDENTITY_FIELDS`, whitelist `status` + `dueDate`) **giữ nguyên** — không đổi
+để "mở khoá" `mgmtNo`. Nếu sau này cần cho sửa số quản lý, hướng đúng là thêm một neo identity
+bất biến (ví dụ `source_fingerprint` chỉ ghi lúc insert và khớp theo neo đó), chứ không phải bỏ
+readonly ở UI.
+
+Test: `tests/server/mgmtNoIdentity.test.ts` (ca hai bảo vệ ở trên, ca tai hại orphan ở trên, control
+không đổi số thì `updated` thay vì `added`, và fallback composite khi `mgmtNo` trống vẫn ổn định);
+`src/components/RecordDetailDrawer.test.tsx` (drawer đọc `MQIS_DISPLAY_FIELD`, không còn input hay
+patch nào cho `mqisCode`, `mgmtNo` chỉ xuất hiện một lần có nhãn);
+`src/business/records/recordsTable.test.ts` (column source là `mgmtNo`, không phải `mqisCode`).
+
+Lưu ý đọc chéo: dòng "Không dùng `id`, `no`, MQIS, status hay due date để nhận diện" ở trên nói về
+field MQIS kế thừa theo nghĩa legacy; ở bản này nhãn cột "MQIS" chính là Management Number, tức
+chính là khoá nhận diện.
 
 ## D. Import flow
 

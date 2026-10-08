@@ -100,7 +100,13 @@ the database back to undo a runtime problem would destroy real work.
 
 ## 5. Publishing
 
-`BUILD_AND_PUBLISH_TNP_TEST.bat ["\\BUILD-PC\TNP_Update\Test"]`
+`BUILD_AND_PUBLISH_TNP_TEST.bat ["\\SERVER\Share\TAT QPN\updates"]`
+
+With no argument it publishes to the default test folder, which is itself a spaced path:
+
+```
+\\192.168.103.12\ReportExtractor_Update\TAT QPN\updates
+```
 
 1. verify `git` and `node` are present
 2. verify the branch is the expected one
@@ -110,7 +116,10 @@ the database back to undo a runtime problem would destroy real work.
 5. run every gate: typecheck, unit/business tests, server tests, portable tests, portable
    runtime tests, update tests, `npm audit`
 6. `npm run package:portable` — build the win-x64 portable TEST runtime
-7. `node dist-desktop/desktop/update/publish.js --source <portable> --target <share>`
+7. **pre-flight the update folder** — `publish.js --target <share> --check-only`, which reports
+   reachability, the current published build, and the build that *would* be used, and refuses to
+   continue if the folder cannot be written or belongs to another channel
+8. `node dist-desktop/desktop/update/publish.js --source <portable> --target <share> --project <repo>`
 
 The publisher then runs, in this fixed order:
 
@@ -126,8 +135,21 @@ destination**, and only then is it renamed into place. The manifest is written t
 manifest that points at a package which is not fully present. If any step fails, the previously
 published manifest stays exactly as it was.
 
-The publisher also refuses to publish an equal or older build over a newer one, cleans up
-`.tmp` files abandoned by earlier failed runs, and leaves unrelated files on the share alone.
+Before anything is written the publisher also:
+
+- **proves write permission** by creating, reading and removing a probe file. `fs.access(W_OK)`
+  reports "writable" on a read-only SMB mount, so the only test that means anything is a write;
+- **refuses a channel mismatch**: a folder whose `version.json` says `production` is never replaced
+  by a test publish, which is what makes "one folder per channel" a safety rule instead of a
+  convention someone has to remember;
+- **advances the build number** when the folder is already at or ahead of `package.json`'s
+  `tnpBuild`, publishes as the next integer, and writes that number back to `package.json` so the
+  client's reported installed build and the manifest cannot drift apart. `--no-bump-build` restores
+  the strict rule that `package.json` is the only authority; `--fail-if-exists` refuses any folder
+  that already publishes a manifest.
+
+It refuses to publish an equal or older build over a newer one, cleans up `.tmp` files abandoned by
+earlier failed runs, and leaves unrelated files on the share alone.
 
 **What the script never does:** `git reset --hard`, `git stash`, `git rebase`, force-push, or
 an auto-merge. It never touches `data/`, `backups/` or `reports/`.
@@ -136,11 +158,63 @@ an auto-merge. It never touches `data/`, `backups/` or `reports/`.
 fast-forward, install, test, build locally. **A production update on the Owner PC never
 depends on GitHub** — the Owner PC reads the LAN share and nothing else.
 
+### The path itself is the fragile part
+
+A UNC path has to survive four escaping regimes before it reaches the share — a TypeScript string
+literal, JSON on disk, a `cmd.exe` command line, and the Windows path parser — and every failure is
+silent. Two rules are load-bearing:
+
+1. **Quote it in batch.** Batch has no backslash escape, so `"..."` is the only thing that keeps
+   `\\SERVER\TAT QPN\updates` in one piece. Unquoted, `cmd.exe` splits at the space and the publish
+   lands in `\\SERVER\TAT` — which the script now detects and refuses (`…\TAT$` at the top), because
+   a manifest in the wrong folder is read by every client as an update that cannot be downloaded.
+2. **Normalise it on the way in.** `normalizeUpdateSource` folds `/` to `\`, collapses separator
+   runs and drops a trailing separator, and rejects drive letters, `\\?\` / `\\.\` namespace paths,
+   `.` / `..` segments, control characters and paths over 260 characters. Case is **preserved**:
+   Windows matches these names case-insensitively, so rewriting them would only make the stored
+   value disagree with what the operator sees in Explorer.
+
+Both rules live in `src/utils/uncPath.ts`, which the desktop main process and the tests share, so
+there is one definition rather than three copies that can drift.
+
+Two more rules follow from the same fragility, and they are not about the path but about stopping:
+
+- **A failed step must end the script.** `call :fail` prints the reason and *returns*, because in
+  batch a called routine can only come back. Every failure site in both scripts is therefore
+  followed by an `exit /b 1` written in the script's own body, and every gate is
+  `call :step … || exit /b 1`. Before this, a typecheck failure logged `FAILED`, printed
+  `--- typecheck: OK ---`, ran the remaining gates, built, and published anyway.
+- **The manual command line is guarded too.** `publish.js` refuses any argument token that is not an
+  option name and was not consumed as a value, with a message naming quoting. An unquoted
+  `--target \\SERVER\Share\TAT QPN\updates` otherwise arrives as the truncated `…\TAT` plus a
+  leftover token — and since a missing target folder is *created*, that would have published a
+  manifest into a folder no client reads. The batch script catches the same shape one layer earlier
+  by refusing a second argument (`if "%~2" neq ""`), which covers any spaced folder name, not only the
+  default one.
+- **`*.bat` is delivered with CRLF.** `.gitattributes` sets `text eol=crlf`, so the blobs stay LF and
+  a Windows checkout still parses labels and blocks reliably. See `docs/windows-test-checklist.md` §8.
+
+### Checking the folder from the client
+
+Owner PC → Desktop panel → **Check update folder** validates the value in the field without saving
+or writing anything, and distinguishes what an operator otherwise cannot tell apart:
+`not-configured` (checking is off, normal), `unreachable` (server, share or network), `not-readable`
+(the folder exists but this PC may not read it), `no-manifest` (reachable, nothing published yet),
+and `invalid-manifest` (unparseable, wrong channel, or a manifest whose package file is missing or
+the wrong size — a half-finished publish).
+
+The check is **not** run while the panel loads. Reading a dead share is discovered by SMB timeout,
+which can take seconds, and the panel state is read on every open and refresh.
+
 ### Manual publish
 
 ```
 npm run package:portable
-node dist-desktop/desktop/update/publish.js --source "artifacts\TNP Defect Management System TEST" --target "\\BUILD-PC\TNP_Update\Test" --channel test --notes "…"
+node dist-desktop/desktop/update/publish.js --source "artifacts\TNP-Defect-Management-TEST-win-x64" --target "\\192.168.103.12\ReportExtractor_Update\TAT QPN\updates" --channel test --project . --notes "…"
+
+# The pre-flight on its own, with nothing written: reachability, write permission,
+# the published build, and the build that would be used next.
+node dist-desktop/desktop/update/publish.js --target "\\192.168.103.12\ReportExtractor_Update\TAT QPN\updates" --channel test --check-only
 ```
 
 ## 6. The client
@@ -284,7 +358,7 @@ Neither is part of the audit trail, and neither is included in an update package
   "lanEnabled": false,
   "port": 8787,
   "workstationLabel": "",
-  "updateSource": "\\\\BUILD-PC\\TNP_Update\\Test",
+  "updateSource": "\\\\192.168.103.12\\ReportExtractor_Update\\TAT QPN\\updates",
   "updateChannel": "test",
   "updateChecksEnabled": true
 }
@@ -300,18 +374,40 @@ error. Environment overrides (development only): `TNP_UPDATE_SOURCE`, `TNP_UPDAT
 | §29 client | `tests/update/client.test.ts` | manifest validation, package-name safety, build ordering, the soft-failure check, `[Later]`, the full install path, SHA mismatch, size mismatch, ZIP-slip, forbidden content, missing runtime files, version drift, backup/install/rollback, the helper, the working area |
 | §30 publisher | `tests/update/publisher.test.ts` | step ordering with the manifest last, production exclusion, leaky source, the build gate, atomicity, stale temp cleanup, unrelated files preserved, unsafe names, channel validation, CLI contract |
 | §31 packaged layout | `tests/update/packageLayout.test.ts` | the real assembled portable build: required entries, launcher name, version/build, identity, the shipped helper, the Phase 6 `startupSignals` regression, the Phase 7 blank-renderer asset regression, publish + extract round trip |
+| target checks and the build bump | `tests/update/publisher.test.ts` (Phase E cases) | probe-based write detection, the `…\TAT` truncation guard, channel-mismatch refusal, `--check-only` / `--bump-build` / `--no-bump-build` / `--fail-if-exists` parsing, `package.json` written back on a bump |
+| the path rules | `src/utils/uncPath.test.ts` | parsing and normalisation, the four escaping regimes, the IPv4 and illegal-character rules, and a static read of `BUILD_AND_PUBLISH_TNP_TEST.bat` asserting the default target and its quoting |
+| client-side folder check | `tests/portable/updateSourceValidation.test.ts` | every state above, the wrong-size package, the other-channel manifest, and that a check never writes |
+| bridge wiring | `tests/portable/bridgeChannels.test.ts` | registered channels vs the preload whitelist vs the interface, the push channel staying un-invokable, and the folder check staying out of state loading |
+| CLI argument safety | `tests/update/publisher.test.ts` | the split-at-a-space refusal, and a quoted spaced path surviving untouched |
+| the batch scripts as text | `src/utils/uncPath.test.ts` | CRLF delivery with LF blobs, every `call :fail` followed by an `exit /b 1`, every `:step` site propagating its code, no escaped quote on a command line, the pre-flight written out with six quote characters and guarded, and the extra-argument rule |
 
 Each suite was verified by **reintroducing the bug it guards** and confirming it fails: removing
 the persistent-directory filter fails 9 client tests; removing the publisher's package-name
 validation fails the unsafe-name test; reintroducing the Phase 6 copy mistake (with the
 assembler's own check weakened) fails 5 packaged-layout tests.
 
+For the Phase E additions the same discipline was applied where a bug was actually found: the path
+rules were written first and the implementation was corrected twice by them (a separator-collapse
+that left `//server/share` unconverted, and a host-name pattern that rejected every IPv4 literal).
+The folder-check states and the bridge wiring assertions are new coverage for behaviour that had
+none, not reproductions of a defect that was then fixed.
+
 ## 12. Not verified here
 
 The following need real Windows and a real LAN share and are **NOT VERIFIED** in this
 environment:
 
-- running `BUILD_AND_PUBLISH_TNP_TEST.bat` on Windows (a `.bat` cannot execute in this sandbox)
+- running `BUILD_AND_PUBLISH_TNP_TEST.bat` or `UPDATE_AND_BUILD_TNP.bat` on Windows (a `.bat` cannot
+  execute in this sandbox). Their behaviour — the quoted target, the truncation guard, the
+  extra-argument guard, running `--check-only` before the publish, `--project` on both calls, and now
+  the `exit /b 1` that ends a run after a failed gate — is asserted **statically against the file
+  text** (`src/utils/uncPath.test.ts`), which proves the lines are present and in order but not that
+  `cmd.exe` behaves as documented. `docs/windows-test-checklist.md` §4a and §7 are the runs that do
+  prove it: publish once with a deliberately broken gate, and publish once with an unquoted path.
+- that CRLF actually reaches the working tree on the build machine, i.e. that the checkout applied
+  `eol=crlf` rather than inheriting an older LF file — check `git ls-files --eol`
+- that PowerShell's `Compress-Archive` is available and not in `ConstrainedLanguage` mode on the
+  build machine; it is the only zip tool the publisher tries on Windows
 - a real end-to-end update on the Owner PC over a UNC share
 - the helper launching from a real Electron binary (`ELECTRON_RUN_AS_NODE=1`)
 - Windows file-locking behaviour while the helper replaces the runtime

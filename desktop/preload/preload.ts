@@ -12,6 +12,7 @@ import type {
   TnpDesktopState,
   TnpDesktopSettings,
   TnpPickResult,
+  TnpUpdateSourceValidation,
   TnpUpdateState,
 } from '../types/tnpDesktop';
 
@@ -25,6 +26,7 @@ const ALLOWED_CHANNELS = [
   'tnp:create-backup',
   'tnp:set-lan-enabled',
   'tnp:set-workstation-label',
+  'tnp:validate-update-source',
   'tnp:restart-server',
   'tnp:get-update-state',
   'tnp:check-update',
@@ -74,6 +76,9 @@ const bridge: TnpDesktopBridge = {
   dismissUpdate: () => call<{ dismissed: boolean }>('tnp:dismiss-update'),
   setUpdateSource: (source) =>
     call<{ source: string; state: TnpUpdateState }>('tnp:set-update-source', source),
+  // A read of the share, so it can be slow; the page calls it from a button and shows a spinner.
+  validateUpdateSource: (source) =>
+    call<TnpUpdateSourceValidation>('tnp:validate-update-source', source),
   onUpdateState: (listener) => {
     const handler = (_event: unknown, state: TnpUpdateState): void => { listener(state); };
     ipcRenderer.on(UPDATE_EVENT_CHANNEL, handler);
