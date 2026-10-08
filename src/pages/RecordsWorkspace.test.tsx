@@ -116,7 +116,7 @@ describe('Records workspace table', () => {
       'Missing weld',
       '—',
       '—',
-      'Weld point missing',
+      'Click to enter the defect name',
       '—',
       '＋ Add',
       '27 Sept 20267-day fallback',
@@ -132,7 +132,7 @@ describe('Records workspace table', () => {
       'Body scratch',
       'Line 3',
       'Welding',
-      'Scratch on left panel',
+      'Click to enter the defect name',
       '—',
       '＋ Add',
       '15 Oct 2026TNP deadline',
@@ -262,5 +262,37 @@ describe('Records column visibility end to end', () => {
 
   it('keeps the horizontal scroll container', () => {
     expect(withStoredPreference(['mqis'], () => renderPage())).toContain('<div class="table-scroll">');
+  });
+});
+
+describe('the manual "Tên lỗi" field in the workspace', () => {
+  const edited: DefectRecord[] = [
+    { ...records[0], manualDefectName: 'Scratch caught at final inspection' },
+    records[1],
+  ];
+
+  function renderEdited(): string {
+    return renderToStaticMarkup(
+      <MemoryRouter>
+        <RecordsWorkspace locale="en" records={edited} mode="records" onRecordsChanged={async () => {}} />
+      </MemoryRouter>,
+    );
+  }
+
+  it('shows the entered value on the row that has one, and the prompt on the row that does not', () => {
+    // Rows come back in operational-priority order, not array order, so match on content.
+    const names = dataRows(renderEdited()).map((row) => row[9]);
+
+    expect(names).toContain('Scratch caught at final inspection');
+    expect(names).toContain('Click to enter the defect name');
+    expect(names.filter((name) => name === 'Click to enter the defect name')).toHaveLength(1);
+  });
+
+  it('never shows the imported defect details in that column', () => {
+    const markup = renderEdited();
+
+    // Both fixtures carry a source value; neither may leak into the manual column.
+    expect(markup).not.toContain('Scratch on left panel');
+    expect(markup).not.toContain('Weld point missing');
   });
 });

@@ -12,7 +12,9 @@ import {
 import { isCompletedStatus } from '../business/status/status';
 import { isRejectedStatus } from '../business/status/status';
 import { displayDate } from '../utils/displayDate';
+import InlineTextCell from './InlineTextCell';
 import QpnCell from './QpnCell';
+import { shouldOpenDrawer } from './recordRowInteraction';
 
 /** Text form of a cell's source value; `null` means the cell shows the em dash placeholder. */
 export function cellText(record: DefectRecord, column: RecordsTableColumnKey, today: string): string | null {
@@ -38,6 +40,11 @@ interface RecordsTableRowProps {
   /** Columns currently visible, in approved order; the CA badge is appended when shown. */
   columns: readonly RecordsTableColumnKey[];
   onSelect: (record: DefectRecord) => void;
+  /**
+   * Persists an inline edit of the manual "Tên lỗi" field through the record update path.
+   * Rejecting leaves the previous value on screen and the reason is shown in the cell.
+   */
+  onSaveDefectName: (record: DefectRecord, next: string) => Promise<void>;
   /** Called after a QPN attachment change so the row refreshes without a full reload. */
   onReportChanged: () => void;
 }
@@ -55,6 +62,7 @@ export default function RecordsTableRow({
   showCaLink,
   columns,
   onSelect,
+  onSaveDefectName,
   onReportChanged,
 }: RecordsTableRowProps) {
   const mqis = cellText(record, 'mqis', today);
@@ -81,7 +89,12 @@ export default function RecordsTableRow({
   return (
     <tr
       className={`record-row${isCompletedStatus(record.status) ? ' completed-record-row' : ''}`}
-      onClick={() => onSelect(record)}
+      onDoubleClick={(event) => {
+        // Buttons, links, inputs and anything opting in via data-tnp-row-interactive keep
+        // the double-click for themselves; the drawer opens only on row chrome.
+        const target = event.target instanceof Element ? event.target : null;
+        if (shouldOpenDrawer(target)) onSelect(record);
+      }}
     >
       {/* NO is the rendered row sequence only. */}
       {cell('no', <td className="row-sequence-cell" key="no">{sequence}</td>)}
@@ -99,11 +112,25 @@ export default function RecordsTableRow({
       {cell('title', <td className="title-cell" key="title" title={title ?? undefined}>{title ?? placeholder}</td>)}
       {cell('occurPlace', <td className="occur-place-cell" key="occurPlace" title={occurPlace ?? undefined}>{occurPlace ?? placeholder}</td>)}
       {cell('partGroup', <td className="part-group-cell" key="partGroup" title={partGroup ?? undefined}>{partGroup ?? placeholder}</td>)}
-      {cell('defectName', <td className="defect-name-cell" key="defectName" title={defectName ?? undefined}>{defectName ?? placeholder}</td>)}
+      {/*
+        "Tên lỗi" is app-managed: it starts blank and is typed here, saved through the record
+        update path. The imported `defectDetails` is never shown in this column and is never
+        written by an edit, so it stays intact as the source value.
+      */}
+      {cell('defectName', (
+        <td className="defect-name-cell" key="defectName" data-tnp-row-interactive="">
+          <InlineTextCell
+            value={defectName ?? ''}
+            label={translate(locale, 'defectNameEditLabel')}
+            placeholder={translate(locale, 'defectNamePlaceholder')}
+            onSave={(next) => onSaveDefectName(record, next)}
+          />
+        </td>
+      ))}
       {/* Tình trạng has no verified source field, so the column spec returns null and this cell is always "—". */}
       {cell('condition', <td className="condition-cell" key="condition">{cellText(record, 'condition', today) ?? placeholder}</td>)}
       {cell('qpn', (
-        <td className="qpn-cell" key="qpn">
+        <td className="qpn-cell" key="qpn" data-tnp-row-interactive="">
           <QpnCell locale={locale} record={record} report={report} onChanged={onReportChanged} />
         </td>
       ))}

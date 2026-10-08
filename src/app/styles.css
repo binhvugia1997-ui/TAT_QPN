@@ -246,6 +246,21 @@ a.qpn-action:hover { text-decoration: underline; }
 .qpn-menu button:hover:not(:disabled) { background: #f2f5ef; }
 .qpn-menu button:disabled { opacity: .55; cursor: progress; }
 .qpn-file-input { display: none; }
+/*
+  Inline "Tên lỗi" editor. The read state reads as ordinary cell text until hovered, and it is
+  a real button so it is keyboard reachable and the row's double-click-to-open-detail rule
+  skips it. Sizes stay inside the fixed 45px row height, including the failure line.
+*/
+.inline-edit-trigger { display: block; max-width: 100%; overflow: hidden; padding: 3px 6px; border: 1px dashed transparent; border-radius: 6px; color: inherit; background: transparent; font-size: 10px; text-align: left; text-overflow: ellipsis; white-space: nowrap; cursor: text; }
+.inline-edit-trigger:hover { border-color: #d5ddd0; background: #f7faf5; }
+.inline-edit-trigger:focus-visible { border-color: #8fae8a; background: #fff; outline: 0; }
+.inline-edit-empty { color: #9aa498; }
+.inline-edit-placeholder { font-style: italic; }
+.inline-edit-input { width: 100%; padding: 3px 6px; border: 1px solid #8fae8a; border-radius: 6px; color: #24362a; background: #fff; font-size: 10px; }
+.inline-edit-input:focus { outline: 0; box-shadow: 0 0 0 2px rgb(143 174 138 / 28%); }
+.inline-edit-input:disabled { opacity: .6; cursor: progress; }
+.inline-edit-failed .inline-edit-input { border-color: #c8576a; }
+.inline-edit-error { display: block; overflow: hidden; margin-top: 1px; color: #a42e3d; font-size: 8px; line-height: 1.15; text-overflow: ellipsis; white-space: nowrap; }
 .tat-pill, .status-pill { display: inline-flex; align-items: center; max-width: 100%; overflow: hidden; padding: 4px 7px; border-radius: 99px; font-size: 9px; font-weight: 750; text-overflow: ellipsis; white-space: nowrap; }
 .tat-overdue { color: #a42e3d; background: #fbe9eb; }
 .tat-today { color: #994012; background: #fff0e7; }

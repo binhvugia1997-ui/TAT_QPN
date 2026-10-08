@@ -10,6 +10,7 @@ import {
   createReportIndex,
   getRecordCellSource,
   getVisibleRecordsColumns,
+  MANUAL_DEFECT_NAME_FIELD,
   type RecordsTableSortableColumn,
   type ReportIndex,
 } from '../business/records/recordsTable';
@@ -25,6 +26,7 @@ import type { DefectRecord, RecordId } from '../models/defect-record';
 import type { Locale, MessageKey } from '../i18n';
 import { translate } from '../i18n';
 import { serverApi } from '../services/server/serverRecordRepository';
+import { recordService } from '../app/services';
 import ColumnsMenu from '../components/ColumnsMenu';
 import RecordDetailDrawer from '../components/RecordDetailDrawer';
 import RecordsTableRow from '../components/RecordsTableRow';
@@ -104,6 +106,17 @@ export default function RecordsWorkspace({ locale, records, mode, onRecordsChang
       setReportIndex(new Map());
     }
   }, []);
+
+  /**
+   * Inline "Tên lỗi" edit. Goes through the same record update path as the Detail drawer, so
+   * the write gets the server's optimistic-concurrency check and its audit trail rather than a
+   * second persistence route. Only the manual field is patched: the imported `defectDetails`
+   * is left exactly as it was.
+   */
+  const saveDefectName = useCallback(async (record: DefectRecord, next: string) => {
+    await recordService.updateRecord(record.id, { [MANUAL_DEFECT_NAME_FIELD]: next || null });
+    await onRecordsChanged();
+  }, [onRecordsChanged]);
 
   /**
    * The QPN column links straight to a record's managed report, so the bulk index is
@@ -400,6 +413,7 @@ export default function RecordsWorkspace({ locale, records, mode, onRecordsChang
                       showCaLink={mode === 'corrective'}
                       columns={columnKeys}
                       onSelect={(selected) => setSelectedId(selected.id)}
+                      onSaveDefectName={saveDefectName}
                       onReportChanged={() => {
                         void reloadReportIndex();
                       }}

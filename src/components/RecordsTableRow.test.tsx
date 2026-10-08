@@ -45,6 +45,7 @@ function renderRow(overrides: Partial<DefectRecord> = {}, options: RenderOptions
       showCaLink={options.mode === 'corrective'}
       columns={options.columns ?? ALL_COLUMNS}
       onSelect={() => {}}
+      onSaveDefectName={async () => {}}
       onReportChanged={() => {}}
     />,
   );
@@ -77,7 +78,7 @@ describe('Records table row rendering', () => {
       'Body scratch',               // Title
       'Line 3',                     // Occur place
       'Welding',                    // Công đoạn quy trách
-      'Scratch on left panel',      // Tên lỗi
+      'Click to enter the defect name', // Tên lỗi — manual, blank until entered
       '—',                          // Tình trạng — no verified source field
       '＋ Add',                     // QPN — nothing attached yet
       '15 Oct 2026TNP deadline',    // TAT Hệ thống
@@ -218,7 +219,7 @@ describe('column visibility in the row', () => {
       'Body scratch',
       'Line 3',
       'Welding',
-      'Scratch on left panel',
+      'Click to enter the defect name',
       '—',
       '＋ Add',
       '15 Oct 2026TNP deadline',
@@ -243,5 +244,48 @@ describe('column visibility in the row', () => {
     expect(source.plant).toBe('TNP');
     expect(source.registeredDate).toBe('2026-10-01');
     expect(source.dueDate).toBe('2026-10-15');
+  });
+});
+
+describe('the editable "Tên lỗi" cell', () => {
+  it('renders an entry prompt instead of the imported defect details', () => {
+    const markup = renderRow();
+
+    // The fixture still carries a source value; it must not appear anywhere in the row.
+    expect(markup).not.toContain('Scratch on left panel');
+    expect(markup).toContain('inline-edit-trigger inline-edit-empty');
+    expect(markup).toContain('Click to enter the defect name');
+  });
+
+  it('is a real button, so it is reachable without a click and blocks the row double-click', () => {
+    const markup = renderRow();
+
+    expect(markup).toContain('class="inline-edit-trigger inline-edit-empty"');
+    expect(markup).toContain('aria-label="Defect name (manual entry)"');
+  });
+
+  it('shows the saved manual value once one exists', () => {
+    const markup = renderRow({ manualDefectName: 'Weld crack on bracket' });
+
+    expect(markup).toContain('Weld crack on bracket');
+    expect(markup).not.toContain('inline-edit-empty');
+    expect(markup).not.toContain('Click to enter the defect name');
+  });
+
+  it('treats a whitespace-only value as still blank', () => {
+    expect(renderRow({ manualDefectName: '   ' })).toContain('inline-edit-empty');
+  });
+
+  it('marks the cell interactive so a double-click edits rather than opening the drawer', () => {
+    expect(renderRow()).toMatch(/<td[^>]*class="defect-name-cell"[^>]*data-tnp-row-interactive/u);
+  });
+
+  it('marks the QPN cell interactive too, so its controls never trigger the drawer', () => {
+    expect(renderRow({}, { reportIndex: withReport })).toMatch(/<td[^>]*class="qpn-cell"[^>]*data-tnp-row-interactive/u);
+  });
+
+  it('does not render the row as a single-click target', () => {
+    // React attaches these as listeners, not attributes, so the guard is the DOM-level check.
+    expect(renderRow()).not.toMatch(/<tr[^>]*\sonclick=/u);
   });
 });

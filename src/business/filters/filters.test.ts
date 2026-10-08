@@ -38,6 +38,19 @@ describe('record filters and sorting', () => {
     expect(applyRecordFilters(records, { ...createEmptyFilters(), search: 'repair-plan' }).map((record) => record.id)).toEqual([2]);
   });
 
+  it('finds a record by the manual "Tên lỗi" text typed in the table, and by its imported source text', () => {
+    const records = [
+      row(1, { manualDefectName: 'Bracket cracked at the weld', defectDetails: 'Loang' }),
+      row(2, { defectDetails: 'Paint peel' }),
+    ];
+
+    // The column shows the manual value, so searching for it must work.
+    expect(applyRecordFilters(records, { ...createEmptyFilters(), search: 'cracked at the weld' }).map((record) => record.id)).toEqual([1]);
+    // The imported source text stays searchable as well.
+    expect(applyRecordFilters(records, { ...createEmptyFilters(), search: 'paint peel' }).map((record) => record.id)).toEqual([2]);
+    expect(applyRecordFilters(records, { ...createEmptyFilters(), search: 'loang' }).map((record) => record.id)).toEqual([1]);
+  });
+
   it('does not mutate the caller when sorting', () => {
     const records = [row(1, { registeredDate: '2026-10-01' }), row(2, { registeredDate: '2026-10-03' })];
     const sorted = sortRecords(records, 'registeredDate', 'desc');

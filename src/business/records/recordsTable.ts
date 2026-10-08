@@ -116,7 +116,8 @@ export function getRecordCellSource(
     case 'title': return text(record.title);
     case 'occurPlace': return text(record.occurPlace);
     case 'partGroup': return text(record.partGroup);
-    case 'defectName': return text(record.defectDetails);
+    // "Tên lỗi" is the app-managed manual value, never the imported `defectDetails`.
+    case 'defectName': return text(record.manualDefectName);
     case 'condition': return null;
     case 'qpn': return null;
     case 'tatSystem': return getTatDueDate(record);
@@ -124,6 +125,13 @@ export function getRecordCellSource(
     case 'caLink': return text(record.caFileLink);
   }
 }
+
+/**
+ * The "Tên lỗi" column and the app-managed field behind it. Exported so the row component,
+ * the save handler, and the tests all name the manual field in one place.
+ */
+export const MANUAL_DEFECT_NAME_COLUMN: RecordsTableColumnKey = 'defectName';
+export const MANUAL_DEFECT_NAME_FIELD = 'manualDefectName' as const;
 
 /** True when the effective TAT deadline came from the source TNP dueDate, not the 7-day fallback. */
 export function hasSourceTatDeadline(record: DefectRecord): boolean {

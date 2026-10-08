@@ -7,6 +7,8 @@ import {
   getRecordCellSource,
   getVisibleRecordsColumns,
   hasSourceTatDeadline,
+  MANUAL_DEFECT_NAME_COLUMN,
+  MANUAL_DEFECT_NAME_FIELD,
   REQUIRED_RECORDS_COLUMNS,
 } from './recordsTable';
 
@@ -93,7 +95,7 @@ describe('Records cell mappings', () => {
     expect(getRecordCellSource(record(), 'title', today)).toBe('Body scratch');
     expect(getRecordCellSource(record(), 'occurPlace', today)).toBe('Line 3');
     expect(getRecordCellSource(record(), 'partGroup', today)).toBe('Welding');
-    expect(getRecordCellSource(record(), 'defectName', today)).toBe('Scratch on left panel');
+    expect(getRecordCellSource(record(), 'defectName', today)).toBeNull();
   });
 
   it('keeps Approval on the original TNP status value, including the Reject state', () => {
@@ -151,5 +153,33 @@ describe('QPN report link', () => {
   it('reports no attachment when the index is empty, so the cell shows the placeholder', () => {
     expect(findAttachedReport(record(), createReportIndex([]))).toBeUndefined();
     expect(getRecordCellSource(record(), 'qpn', today)).toBeNull();
+  });
+});
+
+describe('the manual "Tên lỗi" column', () => {
+  it('starts blank and never falls back to the imported defect details', () => {
+    const untouched = record();
+
+    // The fixture carries a source value; the column must not show it.
+    expect(untouched.defectDetails).toBe('Scratch on left panel');
+    expect(getRecordCellSource(untouched, 'defectName', today)).toBeNull();
+  });
+
+  it('shows exactly what was entered manually', () => {
+    expect(getRecordCellSource(record({ manualDefectName: 'Weld crack' }), 'defectName', today)).toBe('Weld crack');
+    expect(getRecordCellSource(record({ manualDefectName: '   ' }), 'defectName', today)).toBeNull();
+  });
+
+  it('leaves the imported source value readable alongside it', () => {
+    const edited = record({ manualDefectName: 'Weld crack' });
+
+    expect(edited.manualDefectName).toBe('Weld crack');
+    expect(edited.defectDetails).toBe('Scratch on left panel');
+  });
+
+  it('names the field in one place the row and the save handler share', () => {
+    expect(MANUAL_DEFECT_NAME_COLUMN).toBe('defectName');
+    expect(MANUAL_DEFECT_NAME_FIELD).toBe('manualDefectName');
+    expect(REQUIRED_RECORDS_COLUMNS.map(({ key }) => key)).toContain(MANUAL_DEFECT_NAME_COLUMN);
   });
 });
