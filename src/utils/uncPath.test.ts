@@ -288,3 +288,97 @@ describe('the declared defaults', () => {
     expect(stored).toContain('\\\\\\\\192.168.103.12');
   });
 });
+
+describe('the batch scripts that run the gates', () => {
+  const scripts = ['BUILD_AND_PUBLISH_TNP_TEST.bat', 'UPDATE_AND_BUILD_TNP.bat'];
+
+  it('arrive on Windows with CRLF, while git keeps LF blobs', () => {
+    // cmd.exe reads a batch file line by line and its label scanner is unreliable on LF-only
+    // files, which is fatal for scripts that stop every run through `call :fail`, `goto :eof` and
+    // parenthesised blocks. `eol=crlf` fixes the checkout without rewriting the repository: the
+    // normalised blob stays LF, so diffs, tests and every non-Windows tool see no change.
+    expect(read('.gitattributes')).toMatch(/^\*\.bat text eol=crlf$/mu);
+
+    for (const name of scripts) {
+      const text = readFileSync(path.join(repoRoot, name)).toString('utf8');
+      const lf = (text.match(/\n/gu) ?? []).length;
+      const crlf = (text.match(/\r\n/gu) ?? []).length;
+
+      expect(crlf, name).toBeGreaterThan(0);
+      // A mixed file is the worst case: cmd parses some lines correctly and not others.
+      expect(lf - crlf, `${name} lone LF count`).toBe(0);
+    }
+  });
+
+  it('end the run at every failure, which a `call` cannot do on its own', () => {
+    // `call :fail` prints the reason and *returns*. Only an `exit /b 1` written in the script's own
+    // body ends it, so a check added without one would log FAILED, run the next gate, build, and
+    // publish anyway — and `version.json` going last is what makes a published build trusted.
+    for (const name of scripts) {
+      const lines = read(name).split(/\r?\n/u);
+      const failSites = lines
+        .map((line, index) => ({ line, index }))
+        .filter(({ line }) => /^\s*call :fail\b/.test(line));
+
+      expect(failSites.length, name).toBeGreaterThan(4);
+      for (const { line, index } of failSites) {
+        expect(lines[index + 1], `${name} line ${index + 1}: ${line.trim()}`).toMatch(/exit \/b 1/u);
+      }
+    }
+  });
+
+  it('propagate a failed gate out of :step, and never pass a quoted command into it', () => {
+    for (const name of scripts) {
+      const text = read(name);
+      const lines = text.split(/\r?\n/u);
+      const gateLines = lines.filter((line) => /^call :step\b/.test(line));
+
+      expect(gateLines.length, name).toBeGreaterThan(0);
+      for (const line of gateLines) {
+        // Without this the routine's exit code dies inside :step and the next gate runs anyway.
+        expect(line, `${name}: ${line}`).toMatch(/\|\| exit \/b 1$/u);
+        // A :step argument is one quoted string and cmd ends it at the next quote, so a command
+        // that needs quoting must be written out at the call site; more than two quoted values on
+        // one of these lines means the command line was already cut in half.
+        expect((line.match(/"/gu) ?? []).length, `${name}: ${line}`).toBe(4);
+      }
+
+      // There is no backslash escape in batch, so an escaped quote on a command line is not an
+      // escaped quote: cmd hands `\"x\"` to the child as a path that literally contains quotes.
+      // (A `\"` elsewhere is legitimate — `if "%VAR:~-1%"=="\"` compares against one backslash,
+      // because cmd's own quoting has no escape and the backslash is the value.)
+      for (const line of lines.filter((entry) => /^\s*call (node|:step)\b/.test(entry))) {
+        expect(line, `${name}: ${line}`).not.toContain('\\"');
+      }
+    }
+  });
+
+  it('write the pre-flight out with ordinary quoting so its arguments survive', () => {
+    const lines = read('BUILD_AND_PUBLISH_TNP_TEST.bat').split(/\r?\n/u);
+    const preflight = lines.filter((line) => line.includes('--check-only'));
+
+    // One command, and it carries the target, the channel and the project root it is checking.
+    expect(preflight).toHaveLength(1);
+    expect(preflight[0]).toContain('--target "%TNP_UPDATE_TARGET%"');
+    expect(preflight[0]).toContain('--project "%REPO_ROOT%"');
+    // target, project and the script path: three quoted values, six quote characters, no more.
+    expect((preflight[0].match(/"/gu) ?? []).length).toBe(6);
+    // A failed pre-flight must stop the run before the publish line, not merely be logged. Three
+    // lines is the widest failure block the script uses: the check, the report, the stop.
+    const index = lines.findIndex((line) => line.includes('--check-only'));
+    const guard = lines.slice(index + 1, index + 4).join('\n');
+    expect(guard).toMatch(/call :fail/u);
+    expect(guard).toMatch(/exit \/b 1/u);
+    expect(guard, 'the stop has to be in the script body, not inside the routine').not.toMatch(/call :step/u);
+  });
+
+  it('refuse a spaced path of any name, not only the default folder', () => {
+    const text = read('BUILD_AND_PUBLISH_TNP_TEST.bat');
+
+    // The suffix check below catches the documented symptom for the default target. This is the
+    // general rule: a second argument can only exist because cmd.exe split the path at a space.
+    expect(text).toContain('if "%~2" neq "" set "TNP_SPLIT_ARGUMENT=1"');
+    expect(text).toContain('if defined TNP_SPLIT_ARGUMENT (');
+    expect(text).toContain('if "%TNP_UPDATE_TARGET:~-3%"=="TAT"');
+  });
+});

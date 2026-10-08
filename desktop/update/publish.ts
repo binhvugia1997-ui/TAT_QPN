@@ -602,9 +602,15 @@ export function resolveAppPackageJson(projectDir?: string): string {
 export function parsePublishArgs(argv: readonly string[]): PublishCliOptions {
   const values = new Map<string, string>();
   const flags = new Set<string>();
+  const stray: string[] = [];
   for (let index = 0; index < argv.length; index += 1) {
     const token = argv[index];
-    if (!token.startsWith('--')) continue;
+    if (!token.startsWith('--')) {
+      // Any token that is not an option *name* and was not consumed as the value of one. Because
+      // each value is taken by `index += 1` below, anything reaching here is unattached.
+      stray.push(token);
+      continue;
+    }
     const name = token.slice(2);
     if ((PUBLISH_BOOLEAN_FLAGS as readonly string[]).includes(name)) {
       // A switch: the next token is the *next* argument, not this one's value.
@@ -614,6 +620,20 @@ export function parsePublishArgs(argv: readonly string[]): PublishCliOptions {
     values.set(name, String(argv[index + 1] ?? ''));
     index += 1;
   }
+  // Checked before the required-argument rule, because this is what an unquoted spaced path looks
+  // like from here: `--target \\SERVER\\Share\\TAT QPN\\updates` arrives as a truncated `target` plus a
+  // stray `QPN\\updates`. The truncated folder is a real, creatable path, and the publisher creates
+  // missing target folders, so accepting it would write a manifest no client is configured to read —
+  // and every client would then report an update whose package is not there. The batch script refuses
+  // a second argument for the same reason; this covers the manual command line.
+  if (stray.length > 0) {
+    throw new PublishError(
+      `Unexpected argument${stray.length === 1 ? '' : 's'}: ${stray.join(' ')}. `
+      + 'Quote a folder path that contains a space, otherwise it is read as two arguments and the '
+      + 'path stops at the space.',
+    );
+  }
+
   const sourceDir = values.get('source') ?? '';
   const targetDir = values.get('target') ?? '';
   // `--check-only` validates a folder and needs no source, so it is exempt from that rule.

@@ -177,6 +177,23 @@ silent. Two rules are load-bearing:
 Both rules live in `src/utils/uncPath.ts`, which the desktop main process and the tests share, so
 there is one definition rather than three copies that can drift.
 
+Two more rules follow from the same fragility, and they are not about the path but about stopping:
+
+- **A failed step must end the script.** `call :fail` prints the reason and *returns*, because in
+  batch a called routine can only come back. Every failure site in both scripts is therefore
+  followed by an `exit /b 1` written in the script's own body, and every gate is
+  `call :step … || exit /b 1`. Before this, a typecheck failure logged `FAILED`, printed
+  `--- typecheck: OK ---`, ran the remaining gates, built, and published anyway.
+- **The manual command line is guarded too.** `publish.js` refuses any argument token that is not an
+  option name and was not consumed as a value, with a message naming quoting. An unquoted
+  `--target \\SERVER\Share\TAT QPN\updates` otherwise arrives as the truncated `…\TAT` plus a
+  leftover token — and since a missing target folder is *created*, that would have published a
+  manifest into a folder no client reads. The batch script catches the same shape one layer earlier
+  by refusing a second argument (`if "%~2" neq ""`), which covers any spaced folder name, not only the
+  default one.
+- **`*.bat` is delivered with CRLF.** `.gitattributes` sets `text eol=crlf`, so the blobs stay LF and
+  a Windows checkout still parses labels and blocks reliably. See `docs/windows-test-checklist.md` §8.
+
 ### Checking the folder from the client
 
 Owner PC → Desktop panel → **Check update folder** validates the value in the field without saving
@@ -361,6 +378,8 @@ error. Environment overrides (development only): `TNP_UPDATE_SOURCE`, `TNP_UPDAT
 | the path rules | `src/utils/uncPath.test.ts` | parsing and normalisation, the four escaping regimes, the IPv4 and illegal-character rules, and a static read of `BUILD_AND_PUBLISH_TNP_TEST.bat` asserting the default target and its quoting |
 | client-side folder check | `tests/portable/updateSourceValidation.test.ts` | every state above, the wrong-size package, the other-channel manifest, and that a check never writes |
 | bridge wiring | `tests/portable/bridgeChannels.test.ts` | registered channels vs the preload whitelist vs the interface, the push channel staying un-invokable, and the folder check staying out of state loading |
+| CLI argument safety | `tests/update/publisher.test.ts` | the split-at-a-space refusal, and a quoted spaced path surviving untouched |
+| the batch scripts as text | `src/utils/uncPath.test.ts` | CRLF delivery with LF blobs, every `call :fail` followed by an `exit /b 1`, every `:step` site propagating its code, no escaped quote on a command line, the pre-flight written out with six quote characters and guarded, and the extra-argument rule |
 
 Each suite was verified by **reintroducing the bug it guards** and confirming it fails: removing
 the persistent-directory filter fails 9 client tests; removing the publisher's package-name
@@ -378,11 +397,17 @@ none, not reproductions of a defect that was then fixed.
 The following need real Windows and a real LAN share and are **NOT VERIFIED** in this
 environment:
 
-- running `BUILD_AND_PUBLISH_TNP_TEST.bat` on Windows (a `.bat` cannot execute in this sandbox).
-  Its new behaviour — the quoted target, the truncation guard, running `--check-only` before the
-  publish and `--project` on both calls — is asserted **statically against the file text**
-  (`src/utils/uncPath.test.ts`), which proves the lines are present and in order but not that
-  `cmd.exe` behaves as documented
+- running `BUILD_AND_PUBLISH_TNP_TEST.bat` or `UPDATE_AND_BUILD_TNP.bat` on Windows (a `.bat` cannot
+  execute in this sandbox). Their behaviour — the quoted target, the truncation guard, the
+  extra-argument guard, running `--check-only` before the publish, `--project` on both calls, and now
+  the `exit /b 1` that ends a run after a failed gate — is asserted **statically against the file
+  text** (`src/utils/uncPath.test.ts`), which proves the lines are present and in order but not that
+  `cmd.exe` behaves as documented. `docs/windows-test-checklist.md` §4a and §7 are the runs that do
+  prove it: publish once with a deliberately broken gate, and publish once with an unquoted path.
+- that CRLF actually reaches the working tree on the build machine, i.e. that the checkout applied
+  `eol=crlf` rather than inheriting an older LF file — check `git ls-files --eol`
+- that PowerShell's `Compress-Archive` is available and not in `ConstrainedLanguage` mode on the
+  build machine; it is the only zip tool the publisher tries on Windows
 - a real end-to-end update on the Owner PC over a UNC share
 - the helper launching from a real Electron binary (`ELECTRON_RUN_AS_NODE=1`)
 - Windows file-locking behaviour while the helper replaces the runtime

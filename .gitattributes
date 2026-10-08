@@ -1,0 +1,7 @@
+# cmd.exe parses a batch file line by line, and its handling of labels (`goto`, `call :label`) and
+# of parenthesised blocks is unreliable when lines end with LF only. Both scripts here stop every
+# run through `call :fail` and a block, so a Linux-authored checkout has to arrive on Windows with
+# CRLF. The blobs stay LF-normalised, so this changes no diff and no tooling output on other
+# platforms — only what `git checkout` writes into the working tree.
+*.bat text eol=crlf
+*.cmd text eol=crlf

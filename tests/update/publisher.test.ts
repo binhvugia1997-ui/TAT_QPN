@@ -682,6 +682,24 @@ describe('the publish command line', () => {
   it('still rejects an empty target for a check', () => {
     expect(() => parsePublishArgs(['--check-only'])).toThrow(/Usage/u);
   });
+
+  it('refuses a path that was split at a space instead of publishing to the truncated folder', () => {
+    // Exactly what `--target \\PC\share\TAT QPN\updates` becomes when the quotes are forgotten: a
+    // truncated target the publisher would happily create, plus an unattached token. A manifest in
+    // the truncated folder is read by every client as an update whose package does not exist.
+    const split = ['--target', '\\\\PC\\share\\TAT', 'QPN\\updates', '--channel', 'test'];
+
+    expect(() => parsePublishArgs(split)).toThrow(/Unexpected argument/u);
+    expect(() => parsePublishArgs(split)).toThrow(/Quote a folder path that contains a space/u);
+
+    // The same path, quoted, is one argument and survives untouched — spacing and case are not
+    // normalised here, because the folder written to has to be the one the clients are configured
+    // to read, byte for byte.
+    const quoted = parsePublishArgs(['--source', 'a', '--target', '\\\\PC\\share\\TAT QPN\\updates']);
+
+    expect(quoted.targetDir).toBe('\\\\PC\\share\\TAT QPN\\updates');
+    expect(quoted.sourceDir).toBe('a');
+  });
 });
 
 describe('writing the bumped build back to package.json', () => {
